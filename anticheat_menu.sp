@@ -340,6 +340,18 @@ void Menu_ShowPlayerDetail(int client, int target)
     FormatEx(line, sizeof(line), "NoLerp:    %3d", nl); panel.DrawText(line);
     FormatEx(line, sizeof(line), "OSAC:      %3d", oc); panel.DrawText(line);
 
+    int moduleScoresMenu[5];
+    moduleScoresMenu[0] = a; moduleScoresMenu[1] = bh; moduleScoresMenu[2] = ig;
+    moduleScoresMenu[3] = nl; moduleScoresMenu[4] = oc;
+    int menuCorrDistinct;
+    float menuCorrMult = Correlation_GetMultiplierEx(target, menuCorrDistinct);
+    EvidenceReport menuEvidence;
+    Evidence_Classify(risk, menuCorrMult, menuCorrDistinct, moduleScoresMenu, menuEvidence);
+    char evDesc[64];
+    Evidence_Describe(menuEvidence, evDesc, sizeof(evDesc));
+    FormatEx(line, sizeof(line), "Evidencia: %s", evDesc);
+    panel.DrawText(line);
+
     char corrDesc[64];
     if (Correlation_DescribeBestCluster(target, corrDesc, sizeof(corrDesc)))
     {

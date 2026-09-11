@@ -174,6 +174,34 @@ El motor busca, dentro de una ventana de **1.5 segundos**, la mayor cantidad de 
 
 ---
 
+## Modelo de evidencia por niveles (`anticheat_evidence.sp`)
+
+El Risk Score (0-100) sigue siendo un único número, pero mezclaba conceptos distintos: *qué tan fuerte* es la tendencia acumulada, *qué tan seguro* se puede estar de que es evidencia real y no ruido, *qué tan grave* es el peor indicio individual, y *cuánta* evidencia hay. Este módulo separa esos cuatro conceptos y clasifica cada evaluación en uno de 4 niveles, sin cambiar la matemática de ningún detector ni del Risk Score en sí.
+
+### Los cuatro números
+
+- **RiskScore** — el mismo 0-100 de siempre (suma ponderada × multiplicador de correlación).
+- **Confidence** (0.0-1.0) — qué tan confiable es esta evaluación. Sube con la fuerza del peor módulo, con el multiplicador de correlación, y de forma extra si un módulo "logic breach" (Integrity, NoLerp, OSAC) disparó fuerte.
+- **Severity** (0-100) — el peor score individual de los 5 módulos, **sin** el multiplicador de correlación — mide qué tan grave es la peor pieza de evidencia por sí sola.
+- **EvidenceCount** — cuántos detectores independientes contribuyeron (viene directo del motor de correlación; mínimo 1).
+
+### Los cuatro niveles
+
+| Nivel | Cuándo se alcanza | Efecto práctico |
+|---|---|---|
+| **INFO** | Risk por debajo de 15 | Ninguno — ni siquiera se registra en el log |
+| **STATISTICAL** | Risk ≥15 mediante un patrón repetido, sin corroboración de otros detectores | Se acumula riesgo normalmente; para expulsar exige las 3 confirmaciones consecutivas de siempre (~15-30s sostenidos) |
+| **CORRELATED** | ≥2 detectores independientes coincidieron en la ventana de 1.5s del motor de correlación | Prioridad alta para revisión de admin; sigue exigiendo las 3 confirmaciones para actuar automáticamente |
+| **VIOLATION** | Algún módulo "logic breach" (Fake Angles, Invalid Usercmd, NoLerp, BoneLock, SilentAim, SpinBot) alcanzó por sí solo el umbral de módulo fuerte (60/100) | **Solo exige 1 confirmación**, no 3 — son estados que un cliente legítimo no puede producir estructuralmente, no una tendencia de comportamiento que podría ser mala suerte repetida |
+
+### Por qué esto es seguro
+
+- El requisito de que **algún módulo individual llegue a 60/100** (`STRONG_MODULE_THRESHOLD`) sigue siendo obligatorio para todos los niveles antes de siquiera considerar una expulsión — el modelo de evidencia nunca se salta ese filtro, solo decide cuánto tiempo hay que sostener la evidencia una vez que ya lo pasó.
+- Bajar las confirmaciones de 3 a 1 solo aplica a VIOLATION, que por diseño ya es la categoría de menor riesgo de falso positivo del sistema completo (violaciones de límites físicos del motor, no heurísticas estadísticas).
+- El nivel, la confianza, la severidad y el conteo de evidencia se muestran en el log (`[Risk] ... [VIOLATION risk=82 conf=0.95 sev=90 evid=1]`), en `sm_ac_view`, y en el menú in-game, para que un admin entienda **por qué** el sistema decidió lo que decidió, no solo el número final.
+
+---
+
 ## Resumen de acción según Risk Score
 
 | Risk Score | Acción |

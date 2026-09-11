@@ -107,6 +107,7 @@ void AC_RefreshSpecialCache()
 // ------------------------------------------------------------------
 // Include sub-modules directly
 #include "anticheat_correlation.sp"
+#include "anticheat_evidence.sp"
 #include "anticheat_aim.sp"
 #include "anticheat_bhop.sp"
 #include "anticheat_bhop2.sp"
@@ -395,6 +396,28 @@ public Action Timer_Score(Handle timer, any client)
     int totalRisk = RoundFloat(risk);
     if (totalRisk > 100) totalRisk = 100;
 
+    // --- Tiered Evidence Model ---
+    // Classify this evaluation's output into one of four evidence levels
+    // (INFO / STATISTICAL / CORRELATED / VIOLATION), and separate the
+    // blended totalRisk into its four underlying dimensions: RiskScore,
+    // Confidence, Severity, EvidenceCount. This doesn't change any
+    // module's math or the totalRisk value itself - it classifies the
+    // SAME numbers the action logic below already uses, so an admin (or
+    // this code) can reason about WHY a risk value means what it means
+    // instead of comparing a single blended integer against magic
+    // thresholds with no further context.
+    int corrDistinct;
+    corrMult = Correlation_GetMultiplierEx(client, corrDistinct); // re-derive with the distinct count exposed
+    int moduleScoresForEvidence[5];
+    moduleScoresForEvidence[0] = aimScore;
+    moduleScoresForEvidence[1] = bhopScore;
+    moduleScoresForEvidence[2] = integrityScore;
+    moduleScoresForEvidence[3] = noLerpScore;
+    moduleScoresForEvidence[4] = osacScore;
+
+    EvidenceReport evidence;
+    Evidence_Classify(totalRisk, corrMult, corrDistinct, moduleScoresForEvidence, evidence);
+
     // Only log/print evaluations that clear the admin-notice threshold.
     // Below that, no module has produced real evidence yet - it's just
     // partial tendencies (a jump ratio creeping up, a couple of angle
@@ -402,10 +425,13 @@ public Action Timer_Score(Handle timer, any client)
     // noise every 5-10 seconds for every player, every game.
     if (totalRisk >= SCORE_THRESHOLD_NOTE)
     {
-        AC_Log("[Risk] %N - Aim:%d Bhop:%d Integrity:%d NoLerp:%d OSAC:%d => Risk %d (tier %d, corr x%.2f)",
-               client, aimScore, bhopScore, integrityScore, noLerpScore, osacScore, totalRisk, g_SuspicionTier[client], corrMult);
-        PrintToServer("[AntiCheat] Client %N - Aim:%d Bhop:%d Integrity:%d NoLerp:%d OSAC:%d => Risk:%d (tier %d, corr x%.2f)",
-                      client, aimScore, bhopScore, integrityScore, noLerpScore, osacScore, totalRisk, g_SuspicionTier[client], corrMult);
+        char evDesc[128];
+        Evidence_Describe(evidence, evDesc, sizeof(evDesc));
+
+        AC_Log("[Risk] %N - Aim:%d Bhop:%d Integrity:%d NoLerp:%d OSAC:%d => Risk %d (tier %d, corr x%.2f) [%s]",
+               client, aimScore, bhopScore, integrityScore, noLerpScore, osacScore, totalRisk, g_SuspicionTier[client], corrMult, evDesc);
+        PrintToServer("[AntiCheat] Client %N - Aim:%d Bhop:%d Integrity:%d NoLerp:%d OSAC:%d => Risk:%d (tier %d, corr x%.2f) [%s]",
+                      client, aimScore, bhopScore, integrityScore, noLerpScore, osacScore, totalRisk, g_SuspicionTier[client], corrMult, evDesc);
 
         if (corrMult > 1.0)
         {
@@ -507,9 +533,20 @@ public Action Timer_Score(Handle timer, any client)
         }
 
         g_HighRiskStreak[client]++;
-        if (g_HighRiskStreak[client] < BAN_CONFIRMATIONS)
+        // VIOLATION-level evidence (a logic-breach module - Integrity,
+        // NoLerp, or OSAC's BoneLock/SilentAim/SpinBot - firing hard on
+        // its own) is near-certain by construction: it's a state a
+        // legitimate client structurally cannot produce, not a repeatable
+        // behavioral tendency that could be a run of bad luck. Requiring
+        // it to persist across 3 separate 5-10s evaluations only delays
+        // an already-confirmed case. STATISTICAL and CORRELATED evidence
+        // still require the full confirmation streak, unchanged.
+        int confirmationsNeeded = (evidence.Level == EVLEVEL_VIOLATION) ? 1 : BAN_CONFIRMATIONS;
+        if (g_HighRiskStreak[client] < confirmationsNeeded)
         {
-            AC_Log("[ACTION] %N high risk %d; confirmation %d/%d", client, totalRisk, g_HighRiskStreak[client], BAN_CONFIRMATIONS);
+            char evLevelName[16];
+            Evidence_LevelName(evidence.Level, evLevelName, sizeof(evLevelName));
+            AC_Log("[ACTION] %N high risk %d; confirmation %d/%d (%s)", client, totalRisk, g_HighRiskStreak[client], confirmationsNeeded, evLevelName);
             Discord_SendRiskAlert(client, aimScore, bhopScore, integrityScore, noLerpScore, osacScore, totalRisk, "WARN");
             g_LastScoreTime[client] = now;
             return Plugin_Continue;
@@ -598,11 +635,21 @@ public Action Command_ViewPlayer(int client, int args)
     int nl = NoLerp_GetScore(targetId);
     int oc = OSAC_GetScore(targetId);
     float risk = float(a)*WEIGHT_AIM + float(bh)*WEIGHT_BHOP + float(ig)*WEIGHT_INTEGRITY + float(nl)*WEIGHT_NOLERP + float(oc)*WEIGHT_OSAC;
-    float corrMult = Correlation_GetMultiplier(targetId);
+    int corrDistinct;
+    float corrMult = Correlation_GetMultiplierEx(targetId, corrDistinct);
     risk *= corrMult;
     int totalRisk = RoundFloat(risk);
     if (totalRisk > 100) totalRisk = 100;
     ReplyToCommand(client, "[AntiCheat] %N - Aim:%d Bhop:%d Integrity:%d NoLerp:%d OSAC:%d => Risk:%d (corr x%.2f)", targetId, a, bh, ig, nl, oc, totalRisk, corrMult);
+
+    int moduleScoresView[5];
+    moduleScoresView[0] = a; moduleScoresView[1] = bh; moduleScoresView[2] = ig;
+    moduleScoresView[3] = nl; moduleScoresView[4] = oc;
+    EvidenceReport viewEvidence;
+    Evidence_Classify(totalRisk, corrMult, corrDistinct, moduleScoresView, viewEvidence);
+    char evDesc[128];
+    Evidence_Describe(viewEvidence, evDesc, sizeof(evDesc));
+    ReplyToCommand(client, "[AntiCheat] Evidencia: %s", evDesc);
 
     char corrDesc[256];
     if (Correlation_DescribeBestCluster(targetId, corrDesc, sizeof(corrDesc)))

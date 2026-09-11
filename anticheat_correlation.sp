@@ -175,11 +175,20 @@ static void Correlation_FindBestCluster(int client, int &outDistinct, float &out
 // generalized to whichever detectors actually fired.
 float Correlation_GetMultiplier(int client)
 {
-    int distinct = 0;
-    float avgSeverity = 0.0;
-    Correlation_FindBestCluster(client, distinct, avgSeverity);
+    int distinct;
+    return Correlation_GetMultiplierEx(client, distinct);
+}
 
-    if (distinct < CORR_MIN_DISTINCT_FOR_BONUS) return 1.0;
+// Same as above, but also hands back the distinct-detector count behind
+// the multiplier (via `outDistinct`) - the Evidence model (Fase 8) needs
+// this raw count to classify EvidenceCount separately from the blended
+// multiplier itself.
+float Correlation_GetMultiplierEx(int client, int &outDistinct)
+{
+    float avgSeverity = 0.0;
+    Correlation_FindBestCluster(client, outDistinct, avgSeverity);
+
+    if (outDistinct < CORR_MIN_DISTINCT_FOR_BONUS) return 1.0;
 
     // Scale: 2 distinct detectors clustered => modest bump; every
     // additional distinct detector in the same short window pushes
@@ -187,7 +196,7 @@ float Correlation_GetMultiplier(int client)
     // cluster of borderline events is weaker evidence than a cluster of
     // strongly-severe ones even at the same detector count).
     float severityFactor = avgSeverity / 100.0; // 0..1
-    float bonus = float(distinct - CORR_MIN_DISTINCT_FOR_BONUS + 1) * 0.15 * (0.5 + 0.5 * severityFactor);
+    float bonus = float(outDistinct - CORR_MIN_DISTINCT_FOR_BONUS + 1) * 0.15 * (0.5 + 0.5 * severityFactor);
 
     float mult = 1.0 + bonus;
     if (mult > CORR_MAX_MULTIPLIER) mult = CORR_MAX_MULTIPLIER;
