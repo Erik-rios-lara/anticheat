@@ -109,6 +109,7 @@ void AC_RefreshSpecialCache()
 #include "anticheat_correlation.sp"
 #include "anticheat_evidence.sp"
 #include "anticheat_aim.sp"
+#include "anticheat_targetacq.sp"
 #include "anticheat_bhop.sp"
 #include "anticheat_bhop2.sp"
 #include "anticheat_integrity.sp"
@@ -227,6 +228,7 @@ public void OnPluginStart()
             NoLerp_Init(i);
             OSAC_Init(i);
             Correlation_Init(i);
+            TargetAcq_Init(i);
             g_ScoreTimer[i] = CreateTimer(SCORE_TIMER_TICK, Timer_Score, i, TIMER_REPEAT | TIMER_FLAG_NO_MAPCHANGE);
         }
     }
@@ -254,6 +256,7 @@ public void OnClientPutInServer(int client)
     NoLerp_Init(client);
     OSAC_Init(client);
     Correlation_Init(client);
+    TargetAcq_Init(client);
 
     AC_Log("[AntiCheat] Player %N (%d) connected", client, client);
 }
@@ -295,9 +298,10 @@ public Action OnPlayerRunCmd(int client, int &buttons, int &impulse,
     Integrity_RecordTick(client, angles, buttons, cmdnum, tickcount);
     OSAC_RecordTick(client, angles);
 
-    // --- Expensive target-relative checks (Aimlock, TriggerBot): only for
-    // players the cheap checks have already flagged (tier >= 1). A clean
-    // player never triggers the per-frame Special-Infected scan at all. ---
+    // --- Expensive target-relative checks (Aimlock, TriggerBot, Target
+    // Acquisition): only for players the cheap checks have already
+    // flagged (tier >= 1). A clean player never triggers the per-frame
+    // Special-Infected scan at all. ---
     int tier = g_SuspicionTier[client];
     if (tier >= 1)
     {
@@ -312,6 +316,13 @@ public Action OnPlayerRunCmd(int client, int &buttons, int &impulse,
                 Aim_CheckAimlockThrottled(client, angles);
                 if (buttons & IN_ATTACK) Aim_RunTriggerCheck(client);
             }
+
+            // Target Acquisition needs every tick of a session's
+            // trajectory to measure timing/monotonicity correctly - it
+            // is not throttled like the two checks above, but it is
+            // still gated behind tier >= 1, so a clean player never pays
+            // for it either.
+            TargetAcq_RecordTick(client, angles, (buttons & IN_ATTACK) != 0);
         }
     }
 
@@ -366,6 +377,8 @@ public Action Timer_Score(Handle timer, any client)
     }
 
     int aimScore    = Aim_GetScore(client);
+    int targetAcqScore = TargetAcq_GetScore(client);
+    if (targetAcqScore > aimScore) aimScore = targetAcqScore; // independent aim-side signal, take the worst
     int bhopScore   = Bhop_GetScore(client);
     int bhop2Score  = Bhop2_GetScore(client);
     if (bhop2Score > bhopScore) bhopScore = bhop2Score; // two independent bhop detectors, take the worst
@@ -628,6 +641,8 @@ public Action Command_ViewPlayer(int client, int args)
     if (!g_PlayerActive[targetId]) { ReplyToCommand(client, "[AntiCheat] Player not active."); return Plugin_Handled; }
 
     int a = Aim_GetScore(targetId);
+    int ta = TargetAcq_GetScore(targetId);
+    if (ta > a) a = ta;
     int bh = Bhop_GetScore(targetId);
     int b2 = Bhop2_GetScore(targetId);
     if (b2 > bh) bh = b2;
@@ -672,6 +687,7 @@ public Action Command_Reload(int client, int args)
         Integrity_Init(i);
         OSAC_Init(i);
         Correlation_Init(i);
+        TargetAcq_Init(i);
         g_HighRiskStreak[i] = 0;
         g_SuspicionTier[i] = 0;
         g_TierLastEvidence[i] = GetGameTime();
@@ -731,7 +747,7 @@ public Action Event_RoundStart(Event event, const char[] name, bool dontBroadcas
     for (int i = 1; i <= MaxClients; i++)
     {
         if (IsClientInGame(i) && !IsFakeClient(i) && g_PlayerActive[i])
-        { Aim_Init(i); Bhop_Init(i); Bhop2_Init(i); Integrity_Init(i); OSAC_Init(i); }
+        { Aim_Init(i); Bhop_Init(i); Bhop2_Init(i); Integrity_Init(i); OSAC_Init(i); TargetAcq_Init(i); }
     }
     PrintToServer("[AntiCheat] Round start - module data reset.");
     return Plugin_Continue;

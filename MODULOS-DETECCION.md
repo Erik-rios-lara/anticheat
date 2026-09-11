@@ -14,9 +14,9 @@ Archivo fuente de cada módulo entre paréntesis.
 
 ---
 
-## 1. Aim (`anticheat_aim.sp`) — peso 50%
+## 1. Aim (`anticheat_aim.sp`) — peso 42%
 
-El módulo más grande: combina **4 vías de detección distintas**, cada una mirando una señal diferente de aimbot/silent-aim. El score final de Aim es el **máximo** de las 4 (no la suma) — basta con que una sola vía dé evidencia fuerte.
+El módulo más grande: combina **4 vías de detección distintas**, cada una mirando una señal diferente de aimbot/silent-aim. El score final de Aim es el **máximo** de las 4 (no la suma) — basta con que una sola vía dé evidencia fuerte. Además se combina (también por máximo) con el módulo Target Acquisition Analysis descrito más abajo.
 
 Filtro común a todas las vías: solo se evalúan disparos/ángulos contra **Infectados Especiales** (Smoker, Hunter, Boomer, Tank, etc. — no Comunes) y a una distancia mínima de 200 unidades, para no confundir el combate cuerpo a cuerpo legítimo (caótico por naturaleza) con evidencia de trampa.
 
@@ -47,6 +47,27 @@ Filtro común a todas las vías: solo se evalúan disparos/ángulos contra **Inf
 **Por qué funciona:** mide cuánto ángulo le queda al jugador para apuntar exactamente al objetivo, tick a tick. Un humano cierra esa distancia de forma gradual y con ruido. Un script que "engancha" el objetivo colapsa el ángulo restante casi instantáneamente (a ≤10% del ángulo del tick anterior) mientras además produjo un salto grande (≥20°) para llegar ahí — algo que un humano cerrando esa distancia tan rápido no puede producir porque no le queda ángulo "sobrante" que colapsar. Debe sostenerse 7 ticks seguidos (~0.1s) para contar, evitando falsos positivos de un solo tick suelto.
 
 **Umbral:** convergencia ≤10% del delta anterior + salto ≥20°, sostenido ≥7 ticks, se necesitan ≥2 eventos confirmados.
+
+---
+
+## 1b. Target Acquisition Analysis (`anticheat_targetacq.sp`) — se combina con Aim (máximo)
+
+Aimlock (Vía 4) mide una sola transición tick-a-tick: "¿el ángulo restante se colapsó mucho justo después de un salto grande?". Este módulo mira la **sesión completa** de adquisición — desde que un Infectado Especial se convierte en el objetivo relevante más cercano hasta que el jugador dispara o lo pierde de vista — y analiza toda la trayectoria, no solo un instante.
+
+### Cómo funciona
+
+Cada tick mientras hay una "sesión" abierta contra un objetivo, se registra el error angular respecto a ese objetivo. Al cerrar la sesión (por disparo, cambio de objetivo, o timeout de 2s) se reduce a tres métricas: **tiempo de adquisición** (desde que se abrió la sesión hasta que el error cayó bajo 5°), **si terminó en disparo**, y **ratio de monotonicidad** (qué fracción de los ticks tuvo el error angular estrictamente decreciente respecto al anterior).
+
+En vez de puntuar una sola sesión, el sistema acumula un historial de hasta 24 sesiones cerradas por jugador y analiza la **distribución** completa:
+
+- **Consistencia del tiempo de adquisición** — se mide con el coeficiente de variación (desviación estándar / media), no la desviación cruda, para que sea comparable sin importar si el jugador tarda 80ms o 400ms en promedio. Un humano, incluso muy bueno o con sensibilidad alta, muestra variación real de una sesión a otra porque la reacción + control de mouse no es una función de latencia fija. Un script converge en una banda de tiempo estrecha y repetible sin importar la distancia o el ángulo del objetivo.
+- **Monotonicidad sostenida** — una sola sesión con reducción de error suave y monótona no es rara (un humano rastreando bien lo hace a veces). Que **muchas sesiones independientes** muestren consistentemente alta monotonicidad es lo que produce un asistente de puntería tipo PID programado, y lo que el rastreo humano guiado por overshoot/corrección casi nunca produce por casualidad en una muestra grande.
+
+**Importante — ninguna señal es prueba por sí sola:** el diseño exige que **ambas** métricas (timing Y monotonicidad) muestren algo simultáneamente; se combinan con media geométrica en vez de promedio simple, así que una señal fuerte en un solo eje no puede cargar sola el score. Esto es deliberado: la ausencia de errores humanos, por sí sola, nunca cuenta como evidencia — solo la combinación de ambas irregularidades estadísticas sostenidas en el tiempo.
+
+**Umbral:** se necesitan ≥6 sesiones cerradas y "alcanzadas" (llegaron a estar sobre el objetivo) antes de puntuar. Coeficiente de variación del tiempo <0.35 y monotonicidad media ≥70% para empezar a puntuar.
+
+**Rendimiento:** solo corre para jugadores en nivel de vigilancia ≥1 (igual que Aimlock/TriggerBot) — un jugador limpio nunca paga este costo.
 
 ---
 

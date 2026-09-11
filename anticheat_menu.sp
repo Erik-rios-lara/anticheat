@@ -233,6 +233,8 @@ public int Menu_VoteCommandsHandler(Menu menu, MenuAction action, int client, in
 static int Menu_CalcRisk(int target)
 {
     int a  = Aim_GetScore(target);
+    int ta = TargetAcq_GetScore(target);
+    if (ta > a) a = ta;
     int bh = Bhop_GetScore(target);
     int b2 = Bhop2_GetScore(target);
     if (b2 > bh) bh = b2;
@@ -311,6 +313,8 @@ void Menu_ShowPlayerDetail(int client, int target)
 {
     g_MenuTarget[client] = target;
     int a  = Aim_GetScore(target);
+    int taScore = TargetAcq_GetScore(target);
+    if (taScore > a) a = taScore;
     int bh = Bhop_GetScore(target);
     int b2 = Bhop2_GetScore(target);
     if (b2 > bh) bh = b2;
