@@ -71,6 +71,27 @@ En vez de puntuar una sola sesión, el sistema acumula un historial de hasta 24 
 
 ---
 
+## 1c. Statistical Consistency / Variance Profiling — Aim (`anticheat_variance.sp`) — se combina con Aim (máximo)
+
+Todos los demás detectores comparan contra un **umbral global fijo** (ej. "salto ≥2°"). Este módulo hace algo distinto: construye un perfil propio de **cada jugador** a través de varios encuentros independientes y pregunta si su propia varianza colapsa de una forma que la variabilidad humana natural no podría producir por casualidad. El objetivo explícito **no es detectar a un jugador bueno**, sino detectar comportamiento artificialmente repetitivo a través de suficientes muestras.
+
+### Cómo funciona
+
+Mientras el jugador rastrea al mismo Infectado Especial de forma continua (un "bloque de encuentro"), se mide la velocidad angular en cada tick y se acumula su media y varianza internas usando el algoritmo de Welford (sin guardar cada muestra cruda). Al cerrar el bloque — porque cambió de objetivo, lo perdió, o pasaron ≥1.5s sin verlo — se guarda solo ese bloque: su velocidad angular media y su desviación estándar interna.
+
+Con un historial de ≥6 bloques cerrados, se mide la **varianza entre bloques** (no dentro de uno):
+
+- **Consistencia de la velocidad media** — encuentros distintos (distinta distancia, distinto movimiento relativo del objetivo, distinta arma) deberían producir dinámicas de rastreo distintas en un humano. Un bucle de control programado tiende a reproducir una velocidad media casi idéntica sin importar qué esté pasando realmente en cada encuentro.
+- **Consistencia de la suavidad interna** — la desviación estándar *dentro* de cada bloque debería variar de un encuentro a otro también; que se mantenga casi igual siempre es la segunda señal.
+
+Ambas se miden con coeficiente de variación (no varianza cruda) para ser independientes de la escala — no importa si el jugador rastrea rápido o lento en general, solo importa qué tan **consistente** es consigo mismo entre encuentros que no deberían parecerse.
+
+**Umbral:** se necesitan ≥6 bloques de encuentro (mínimo 8 ticks cada uno). Coeficiente de variación de las medias <0.25 Y de las desviaciones estándar <0.30 — **ambos** deben cumplirse a la vez.
+
+**Rendimiento:** igual que Target Acquisition, solo corre en vigilancia ≥1.
+
+---
+
 ## 2. Bhop (`anticheat_bhop.sp`) — peso 22%
 
 Detecta bunny-hop automatizado (scripts que saltan en el tick exacto de aterrizaje para no perder velocidad), combinando **3 métricas**.
@@ -94,6 +115,22 @@ Un salto cuenta como "con air-strafe" cuando, durante su fase aérea: se mantuvo
 
 ### Métrica 3 — Honeypot de gravedad (técnica de StAC-tf2)
 En cuanto la racha llega a 8 saltos perfectos consecutivos, el plugin **multiplica silenciosamente la gravedad del jugador** por un valor aleatorio entre 6.1x y 7.9x, sin avisar. El timing de un bunny-hopper humano está calibrado para la gravedad normal — el cambio de física rompe ese "feel" y falla el salto de inmediato. Un script, en cambio, reacciona solo a la bandera `FL_ONGROUND` del motor, no al *feel* del salto, así que sigue acertando perfecto incluso con la gravedad alterada. Si sobrevive 3 saltos perfectos bajo gravedad honeypot, el score se fuerza a 100 — evidencia prácticamente irrefutable, físicamente casi imposible de producir por un humano. Si falla un salto mientras el honeypot está activo, se le devuelve la gravedad normal sin penalización (así se comportaría alguien legítimo).
+
+---
+
+## 2a. Statistical Consistency / Variance Profiling — Bhop (`anticheat_variance.sp`) — se combina con Bhop (máximo)
+
+Misma filosofía que la versión de Aim, aplicada al timing de salto. En vez de solo clasificar cada salto como "perfecto" o no, mide el **tiempo real en milisegundos** entre aterrizar y presionar salto — incluyendo saltos tardíos, no solo los que caen en la ventana de 1 tick.
+
+### Cómo funciona
+
+Los saltos se agrupan en **secuencias** (cadenas continuas, igual que el concepto de racha del módulo Bhop). Dentro de cada secuencia se acumula la media y varianza del tiempo de reacción salto-a-salto. Al cerrar la secuencia (por inactividad prolongada), se guarda su desviación estándar interna.
+
+Con ≥5 secuencias cerradas, se mide la **desviación estándar entre secuencias distintas**. Aquí se usa la desviación absoluta (no coeficiente de variación) porque los valores ya están acotados a un rango estrecho de 0-15ms por definición de "ventana perfecta" — un humano que acierta esa ventana repetidamente todavía tiene jitter de unos pocos milisegundos de una secuencia a otra (cansancio, distracción, qué tan bien "se sintió" cada salto en particular). Un temporizador programado produce un jitter casi nulo entre secuencias completamente distintas (terreno distinto, punto distinto del mapa).
+
+**Umbral:** ≥5 secuencias de ≥5 saltos cada una. Desviación estándar entre secuencias por debajo de 3ms para empezar a puntuar.
+
+**Rendimiento:** corre para todos los jugadores cada tick — es aritmética barata, sin búsqueda de objetivo ni trigonometría, igual que el resto del módulo Bhop original.
 
 ---
 
