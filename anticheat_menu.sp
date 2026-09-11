@@ -244,6 +244,7 @@ static int Menu_CalcRisk(int target)
                 + float(ig)* WEIGHT_INTEGRITY
                 + float(nl)* WEIGHT_NOLERP
                 + float(oc)* WEIGHT_OSAC;
+    riskF *= Correlation_GetMultiplier(target);
     int risk = RoundFloat(riskF);
     return (risk > 100) ? 100 : risk;
 }
@@ -338,6 +339,13 @@ void Menu_ShowPlayerDetail(int client, int target)
     FormatEx(line, sizeof(line), "Integrity: %3d", ig); panel.DrawText(line);
     FormatEx(line, sizeof(line), "NoLerp:    %3d", nl); panel.DrawText(line);
     FormatEx(line, sizeof(line), "OSAC:      %3d", oc); panel.DrawText(line);
+
+    char corrDesc[64];
+    if (Correlation_DescribeBestCluster(target, corrDesc, sizeof(corrDesc)))
+    {
+        FormatEx(line, sizeof(line), "Correlacion: %s", corrDesc);
+        panel.DrawText(line);
+    }
     panel.DrawText("------------------------");
 
     panel.CurrentKey = 1;

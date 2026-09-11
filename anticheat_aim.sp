@@ -192,6 +192,11 @@ static void Aim_CheckCmdnumSpike(int client, int cmdnum, bool firing)
         g_CmdSpikeEventTime[client][idx] = GetGameTime();
         g_CmdSpikeEventHead[client] = (idx + 1) % CMDSPIKE_EVENT_HISTORY;
         if (g_CmdSpikeEventCount[client] < CMDSPIKE_EVENT_HISTORY) g_CmdSpikeEventCount[client]++;
+
+        // Severity: how far past the threshold the spike went, capped at 100.
+        int absSpike = spike < 0 ? -spike : spike;
+        int severity = 50 + (absSpike - threshold) * 2;
+        Correlation_ReportEvent(client, CORR_DET_AIM_CMDSPIKE, severity);
     }
 
     g_CmdNumPrevPrev[client] = g_CmdNumPrev[client];
@@ -255,6 +260,9 @@ static void Aim_CheckAngleRepeat(int client)
     g_RepeatEventTime[client][idx] = GetGameTime();
     g_RepeatEventHead[client] = (idx + 1) % REPEAT_EVENT_HISTORY;
     if (g_RepeatEventCount[client] < REPEAT_EVENT_HISTORY) g_RepeatEventCount[client]++;
+
+    // Severity: how far past the "sudden jump" threshold this snap was.
+    Correlation_ReportEvent(client, CORR_DET_AIM_REPEAT, RoundFloat(40.0 + jumpDeg));
 }
 
 // ------------------------------------------------------------------
@@ -351,6 +359,9 @@ static void Aim_CheckAimlock(int client, const float angles[3])
             g_AimlockEventTime[client][idx] = GetGameTime();
             g_AimlockEventHead[client] = (idx + 1) % AIMLOCK_EVENT_HISTORY;
             if (g_AimlockEventCount[client] < AIMLOCK_EVENT_HISTORY) g_AimlockEventCount[client]++;
+
+            // A confirmed sustained lock is strong on its own - fixed high severity.
+            Correlation_ReportEvent(client, CORR_DET_AIM_AIMLOCK, 75);
             // Reset the hold so a single sustained lock doesn't count as
             // dozens of events - each confirmed lock-on is one event.
             g_AimlockHoldTicks[client] = 0;
@@ -413,6 +424,9 @@ void Aim_RecordShot(int attacker, int victim, int hitgroup)
     g_EventTime[attacker][idx] = GetGameTime();
     g_EventHead[attacker] = (idx + 1) % EVENT_HISTORY;
     if (g_EventCount[attacker] < EVENT_HISTORY) g_EventCount[attacker]++;
+
+    // Severity: how far past the base snap threshold this headshot's flick was.
+    Correlation_ReportEvent(attacker, CORR_DET_AIM_SNAP, RoundFloat(40.0 + snapDeg * 3.0));
 }
 
 static float FMin(float a, float b) { return a < b ? a : b; }

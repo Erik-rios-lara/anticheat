@@ -106,6 +106,7 @@ void AC_RefreshSpecialCache()
 
 // ------------------------------------------------------------------
 // Include sub-modules directly
+#include "anticheat_correlation.sp"
 #include "anticheat_aim.sp"
 #include "anticheat_bhop.sp"
 #include "anticheat_bhop2.sp"
@@ -224,6 +225,7 @@ public void OnPluginStart()
             Integrity_Init(i);
             NoLerp_Init(i);
             OSAC_Init(i);
+            Correlation_Init(i);
             g_ScoreTimer[i] = CreateTimer(SCORE_TIMER_TICK, Timer_Score, i, TIMER_REPEAT | TIMER_FLAG_NO_MAPCHANGE);
         }
     }
@@ -250,6 +252,7 @@ public void OnClientPutInServer(int client)
     Integrity_Init(client);
     NoLerp_Init(client);
     OSAC_Init(client);
+    Correlation_Init(client);
 
     AC_Log("[AntiCheat] Player %N (%d) connected", client, client);
 }
@@ -374,6 +377,21 @@ public Action Timer_Score(Handle timer, any client)
                + float(integrityScore) * WEIGHT_INTEGRITY
                + float(noLerpScore) * WEIGHT_NOLERP
                + float(osacScore) * WEIGHT_OSAC;
+
+    // --- Cross-Detector Correlation ---
+    // The weighted sum above treats "one module mildly suspicious" and
+    // "several independent modules firing in the same instant" as
+    // differing only by magnitude. Correlation_GetMultiplier() looks at
+    // the raw events each detector already reported (see
+    // Correlation_ReportEvent call sites) and returns >1.0 only when
+    // multiple DISTINCT detectors clustered within a short window - i.e.
+    // when this isn't one noisy module, but a chain like snap -> perfect
+    // acquisition -> shot -> clean impact lighting up several modules at
+    // once. It amplifies existing risk; it cannot manufacture risk out of
+    // an all-zero baseline (1.0x on 0 is still 0).
+    float corrMult = Correlation_GetMultiplier(client);
+    risk *= corrMult;
+
     int totalRisk = RoundFloat(risk);
     if (totalRisk > 100) totalRisk = 100;
 
@@ -384,10 +402,19 @@ public Action Timer_Score(Handle timer, any client)
     // noise every 5-10 seconds for every player, every game.
     if (totalRisk >= SCORE_THRESHOLD_NOTE)
     {
-        AC_Log("[Risk] %N - Aim:%d Bhop:%d Integrity:%d NoLerp:%d OSAC:%d => Risk %d (tier %d)",
-               client, aimScore, bhopScore, integrityScore, noLerpScore, osacScore, totalRisk, g_SuspicionTier[client]);
-        PrintToServer("[AntiCheat] Client %N - Aim:%d Bhop:%d Integrity:%d NoLerp:%d OSAC:%d => Risk:%d (tier %d)",
-                      client, aimScore, bhopScore, integrityScore, noLerpScore, osacScore, totalRisk, g_SuspicionTier[client]);
+        AC_Log("[Risk] %N - Aim:%d Bhop:%d Integrity:%d NoLerp:%d OSAC:%d => Risk %d (tier %d, corr x%.2f)",
+               client, aimScore, bhopScore, integrityScore, noLerpScore, osacScore, totalRisk, g_SuspicionTier[client], corrMult);
+        PrintToServer("[AntiCheat] Client %N - Aim:%d Bhop:%d Integrity:%d NoLerp:%d OSAC:%d => Risk:%d (tier %d, corr x%.2f)",
+                      client, aimScore, bhopScore, integrityScore, noLerpScore, osacScore, totalRisk, g_SuspicionTier[client], corrMult);
+
+        if (corrMult > 1.0)
+        {
+            char corrDesc[256];
+            if (Correlation_DescribeBestCluster(client, corrDesc, sizeof(corrDesc)))
+            {
+                AC_Log("[Correlation] %N - %s", client, corrDesc);
+            }
+        }
     }
 
     // --- Update suspicion tier ---
@@ -571,8 +598,18 @@ public Action Command_ViewPlayer(int client, int args)
     int nl = NoLerp_GetScore(targetId);
     int oc = OSAC_GetScore(targetId);
     float risk = float(a)*WEIGHT_AIM + float(bh)*WEIGHT_BHOP + float(ig)*WEIGHT_INTEGRITY + float(nl)*WEIGHT_NOLERP + float(oc)*WEIGHT_OSAC;
+    float corrMult = Correlation_GetMultiplier(targetId);
+    risk *= corrMult;
     int totalRisk = RoundFloat(risk);
-    ReplyToCommand(client, "[AntiCheat] %N - Aim:%d Bhop:%d Integrity:%d NoLerp:%d OSAC:%d => Risk:%d", targetId, a, bh, ig, nl, oc, totalRisk);
+    if (totalRisk > 100) totalRisk = 100;
+    ReplyToCommand(client, "[AntiCheat] %N - Aim:%d Bhop:%d Integrity:%d NoLerp:%d OSAC:%d => Risk:%d (corr x%.2f)", targetId, a, bh, ig, nl, oc, totalRisk, corrMult);
+
+    char corrDesc[256];
+    if (Correlation_DescribeBestCluster(targetId, corrDesc, sizeof(corrDesc)))
+    {
+        ReplyToCommand(client, "[AntiCheat] Correlacion: %s", corrDesc);
+    }
+
     Discord_SendAdminQuery(client, targetId, a, bh, ig, nl, oc, totalRisk);
     return Plugin_Handled;
 }
@@ -587,6 +624,7 @@ public Action Command_Reload(int client, int args)
         Bhop2_Init(i);
         Integrity_Init(i);
         OSAC_Init(i);
+        Correlation_Init(i);
         g_HighRiskStreak[i] = 0;
         g_SuspicionTier[i] = 0;
         g_TierLastEvidence[i] = GetGameTime();

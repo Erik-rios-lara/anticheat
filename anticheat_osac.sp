@@ -194,6 +194,7 @@ void OSAC_RecordTick(int client, const float angles[3])
             g_SB_EventHead[client] = (idx + 1) % SPIN_HISTORY;
             if (g_SB_EventCount[client] < SPIN_HISTORY) g_SB_EventCount[client]++;
             g_SB_ContinuousDeg[client] = 0.0; // one confirmed spin = one event
+            Correlation_ReportEvent(client, CORR_DET_OSAC_SPINBOT, 90);
         }
     }
     else
@@ -239,6 +240,9 @@ void OSAC_RecordShot(int attacker, int victim, int hitgroup, const float attacke
         g_SA_EventTime[attacker][idx] = now;
         g_SA_EventHead[attacker] = (idx + 1) % SILENT_HISTORY;
         if (g_SA_EventCount[attacker] < SILENT_HISTORY) g_SA_EventCount[attacker]++;
+
+        // Severity: how far past the honest-population ceiling (8 deg) this hit was.
+        Correlation_ReportEvent(attacker, CORR_DET_OSAC_SILENTAIM, RoundFloat(50.0 + (errBody - SILENT_OFF_DEG) * 2.0));
     }
 
     // --- BoneLock: repeated sub-quantization hits on head center ---
@@ -263,6 +267,10 @@ void OSAC_RecordShot(int attacker, int victim, int hitgroup, const float attacke
                 g_BL_EventTime[attacker][idx] = now;
                 g_BL_EventHead[attacker] = (idx + 1) % BONELOCK_HISTORY;
                 if (g_BL_EventCount[attacker] < BONELOCK_HISTORY) g_BL_EventCount[attacker]++;
+
+                // Sub-quantization hit - the strongest single-shot evidence
+                // this whole plugin can produce. Fixed high severity.
+                Correlation_ReportEvent(attacker, CORR_DET_OSAC_BONELOCK, 95);
             }
             g_BL_Holding[attacker] = true;
             g_BL_LastLockYaw[attacker] = attackerAngles[1];
@@ -345,6 +353,9 @@ void OSAC_CheckTrigger(int client, const float angleYaw[OSAC_ANGLE_HISTORY], con
     g_TB_EventTime[client][idx] = now;
     g_TB_EventHead[client] = (idx + 1) % TRIGGER_HISTORY;
     if (g_TB_EventCount[client] < TRIGGER_HISTORY) g_TB_EventCount[client]++;
+
+    // Severity: how far under the human reaction floor this shot was.
+    Correlation_ReportEvent(client, CORR_DET_OSAC_TRIGGER, RoundFloat(50.0 + (TRIGGER_HUMAN_FLOOR_MS - reactionMs)));
 }
 
 // ------------------------------------------------------------------
@@ -363,6 +374,15 @@ void OSAC_NoteKill(int attacker, int victim, bool headshot)
     g_KB_KillVictim[attacker][idx] = victim;
     g_KB_KillHead[attacker] = (idx + 1) % KILLBURST_HISTORY;
     if (g_KB_KillCount[attacker] < KILLBURST_HISTORY) g_KB_KillCount[attacker]++;
+
+    // Only report to the correlation engine once the burst pattern itself
+    // is confirmed (>=KILLBURST_MIN_VICTIMS distinct in the window) - a
+    // single legitimate headshot kill is not raw evidence on its own and
+    // would just add noise to every good player's correlation buffer.
+    if (OSAC_KillBurstScore(attacker) > 0)
+    {
+        Correlation_ReportEvent(attacker, CORR_DET_OSAC_KILLBURST, 80);
+    }
 }
 
 // ------------------------------------------------------------------

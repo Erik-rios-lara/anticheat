@@ -118,6 +118,9 @@ static void ConVar_OnUpdateRate(QueryCookie cookie, int client, ConVarQueryResul
         g_NoLerpEventTime[client][idx] = GetGameTime();
         g_NoLerpEventHead[client] = (idx + 1) % NOLERP_EVENT_HISTORY;
         if (g_NoLerpEventCount[client] < NOLERP_EVENT_HISTORY) g_NoLerpEventCount[client]++;
+
+        // Configuration read, not behavior - near-certain by construction.
+        Correlation_ReportEvent(client, CORR_DET_NOLERP, 85);
     }
 }
 

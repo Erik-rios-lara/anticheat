@@ -273,6 +273,9 @@ void Bhop_RecordTick(int client, int buttons, const float angles[3])
             if (g_BH_HoneypotPerfectCount[client] >= BHOP_HONEYPOT_JUMPS)
             {
                 g_BH_HoneypotBonus[client] = 100;
+                // Physical-impossibility evidence, not a statistical
+                // tendency - report at max severity.
+                Correlation_ReportEvent(client, CORR_DET_BHOP_RATIO, 100);
             }
         }
         else if (!g_BH_HoneypotActive[client] && g_BH_CurrentStreak[client] >= BHOP_HONEYPOT_STREAK)

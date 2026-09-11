@@ -176,13 +176,21 @@ static void Bhop2_EvaluateJump(int client, int airTicks, float outVelocity)
     int denomTicks = airTicks > 0 ? airTicks : 1;
     float pressesPerTick = float(presses) / float(denomTicks);
     bool isHyper = (pressesPerTick >= B2_HYPERSCROLL_PPT) && (presses >= 3);
-    if (isHyper) { g_B2_StreakHyper[client]++; g_B2_TotalHyper[client]++; }
+    if (isHyper)
+    {
+        g_B2_StreakHyper[client]++; g_B2_TotalHyper[client]++;
+        Correlation_ReportEvent(client, CORR_DET_BHOP2, RoundFloat(pressesPerTick * 60.0));
+    }
 
     // --- composite hack jump ---
     bool isHack = (gapTicks <= B2_HACK_MAX_GAP_TICKS)
                && (gapTicks > B2_HACK_LOOSE_GAP || presses <= B2_HACK_MAX_PRESSES)
                && (outVelocity >= B2_HACK_MIN_VELOCITY);
-    if (isHack) { g_B2_StreakHack[client]++; g_B2_TotalHack[client]++; }
+    if (isHack)
+    {
+        g_B2_StreakHack[client]++; g_B2_TotalHack[client]++;
+        Correlation_ReportEvent(client, CORR_DET_BHOP2, 65);
+    }
 
     Bhop2_Judge(client);
 }

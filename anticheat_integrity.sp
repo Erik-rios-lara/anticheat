@@ -62,6 +62,9 @@ void Integrity_RecordTick(int client, const float angles[3], int buttons, int cm
         g_FakeAngleEventTime[client][idx] = GetGameTime();
         g_FakeAngleEventHead[client] = (idx + 1) % FAKEANGLE_EVENT_HISTORY;
         if (g_FakeAngleEventCount[client] < FAKEANGLE_EVENT_HISTORY) g_FakeAngleEventCount[client]++;
+
+        // Hard engine-limit violation - near-certain evidence on its own.
+        Correlation_ReportEvent(client, CORR_DET_INTEGRITY, 90);
     }
 
     // Invalid usercmd - negative sequence fields, or a buttons mask using
@@ -72,6 +75,8 @@ void Integrity_RecordTick(int client, const float angles[3], int buttons, int cm
         g_InvalidCmdEventTime[client][idx] = GetGameTime();
         g_InvalidCmdEventHead[client] = (idx + 1) % INVALIDCMD_EVENT_HISTORY;
         if (g_InvalidCmdEventCount[client] < INVALIDCMD_EVENT_HISTORY) g_InvalidCmdEventCount[client]++;
+
+        Correlation_ReportEvent(client, CORR_DET_INTEGRITY, 90);
     }
 }
 

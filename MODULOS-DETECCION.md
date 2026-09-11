@@ -3,12 +3,12 @@
 Este documento explica **qué hace cada módulo de detección**, cómo funciona técnicamente, y qué tipo de trampa detecta. El sistema combina 5 módulos independientes en un único **Risk Score (0-100)** evaluado cada 10 segundos por jugador.
 
 ```
-Risk = Aim×42% + Bhop×22% + Integrity×11% + NoLerp×10% + OSAC×15%
+Risk = (Aim×42% + Bhop×22% + Integrity×11% + NoLerp×10% + OSAC×15%) × Multiplicador de Correlación
 ```
 
 (El módulo Bhop-2 no tiene peso propio: su puntaje se combina con el de Bhop tomando el máximo de ambos.)
 
-Cada módulo produce su propia puntuación 0-100 de forma totalmente independiente — ninguno depende de los demás para funcionar. Esto es deliberado: un cheat puede evadir un módulo pero rara vez evade los 5 a la vez, y cuando **un solo módulo** llega a 60/100 por sí solo (`STRONG_MODULE_THRESHOLD`), eso ya es evidencia suficiente para expulsar al jugador aunque el Risk total combinado no llegue al umbral.
+Cada módulo produce su propia puntuación 0-100 de forma totalmente independiente — ninguno depende de los demás para funcionar. Esto es deliberado: un cheat puede evadir un módulo pero rara vez evade los 5 a la vez, y cuando **un solo módulo** llega a 60/100 por sí solo (`STRONG_MODULE_THRESHOLD`), eso ya es evidencia suficiente para expulsar al jugador aunque el Risk total combinado no llegue al umbral. **Este gate usa siempre el score individual de cada módulo, nunca el Risk ya multiplicado por correlación** — la correlación acelera qué tan rápido se junta evidencia ya confirmada, pero nunca sustituye la necesidad de que algún módulo confirme su propia evidencia primero.
 
 Archivo fuente de cada módulo entre paréntesis.
 
@@ -149,6 +149,28 @@ Cinco detectores reimplementados de [OSAntiCheat](https://github.com/Pintuzoft/O
 **Qué detecta:** una **velocidad de giro (yaw) sostenida imposible para una muñeca humana** — ≥1000°/s mantenida sin interrupción por ≥720° (dos vueltas completas).
 
 **Por qué funciona:** un humano puede hacer un flick rápido durante un instante, pero no puede *sostener* >1000°/s de forma continua y en una sola dirección. Cualquier cambio de dirección o caída de velocidad rompe la cuenta. **Umbral:** ≥2 eventos (uno solo se descarta como fluke).
+
+---
+
+## Motor de correlación entre detectores (`anticheat_correlation.sp`)
+
+Hasta ahora el sistema solo *sumaba* los scores de los 5 módulos con pesos fijos — un módulo mostrando sospecha leve y tres módulos independientes disparando en el mismo instante producían el mismo tipo de resultado, solo con distinta magnitud. El motor de correlación agrega una capa encima de eso, **sin tocar la lógica interna de ningún detector existente**.
+
+### Cómo funciona
+
+Cada sub-detector (los 13 descritos arriba: 4 de Aim, 1 de Bhop, 2 de Bhop-2, 2 de Integrity, 1 de NoLerp, 5 de OSAC) reporta al motor de correlación el instante exacto en que registra un evento crudo — el mismo momento en que ya escribía en su propio historial interno, sin cambiar cuándo ni por qué dispara. Cada reporte lleva: qué detector fue, cuándo, y qué tan severo fue ese evento puntual (0-100).
+
+El motor busca, dentro de una ventana de **1.5 segundos**, la mayor cantidad de **detectores distintos** que dispararon cerca uno del otro. Si solo un detector repite su propia señal varias veces, eso ya está reflejado en el score de ese módulo — no aporta nada nuevo. Pero si, por ejemplo, en el mismo segundo y medio se registran un evento de Angle Repeat, un TriggerBot y un BoneLock, eso es una cadena de evidencia que ningún módulo por separado puede ver: "el objetivo se volvió relevante → la mira saltó → adquisición perfecta → disparo casi instantáneo → impacto imposible", exactamente el patrón que un cheat real produce y que un jugador legítimo casi nunca replica en una ventana tan corta.
+
+### El multiplicador
+
+`Correlation_GetMultiplier()` devuelve un factor entre **1.0x** (sin correlación, el caso normal) y **1.6x** (varios detectores independientes coincidiendo con alta severidad). Ese factor se multiplica sobre el Risk Score ya calculado — **nunca puede inventar riesgo de la nada**: 1.6× sobre un Risk de 0 sigue siendo 0. Solo amplifica evidencia que ya existe, haciendo que llegue más rápido a los umbrales de aviso/expulsión cuando viene de fuentes independientes.
+
+### Por qué es seguro
+
+- El gate que autoriza la expulsión automática (`STRONG_MODULE_THRESHOLD`) sigue mirando los scores **individuales sin multiplicar** de cada módulo — la correlación nunca puede sustituir la exigencia de que al menos un detector ya haya confirmado su propia evidencia por sí solo.
+- Los eventos de "ruido esperable" (ej. cada headshot legítimo a un Especial) no se reportan al motor — solo se reporta cuando el propio detector ya decidió que el evento cruza su umbral interno, o en el caso de KillBurst, solo cuando el patrón de ráfaga ya está confirmado.
+- El log de riesgo ahora incluye el multiplicador aplicado (`corr x1.35`) y, cuando hay correlación relevante, una línea `[Correlation]` describiendo qué detectores coincidieron y en qué ventana — visible también en `sm_ac_view` y en el menú in-game, para que un admin pueda auditar por qué el riesgo subió más rápido de lo esperado.
 
 ---
 
