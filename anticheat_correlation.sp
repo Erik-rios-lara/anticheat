@@ -61,6 +61,7 @@ enum CorrelationDetector
     CORR_DET_TARGETACQ,          // Target Acquisition Analysis (anticheat_targetacq.sp)
     CORR_DET_AIMVARIANCE,        // Aim angular-velocity variance profile (anticheat_variance.sp)
     CORR_DET_BHOPVARIANCE,       // Bhop jump-timing variance profile (anticheat_variance.sp)
+    CORR_DET_SHOTDECISION,       // Shot Decision Analysis (anticheat_shotdecision.sp)
     CORR_DET_COUNT               // sentinel - keep last
 };
 
@@ -85,7 +86,7 @@ static char g_Corr_DetectorNames[CORR_DET_COUNT][24] = {
     "AimSnap", "AngleRepeat", "CmdnumSpike", "Aimlock",
     "BhopRatio", "Bhop2", "Integrity", "NoLerp",
     "BoneLock", "SilentAim", "TriggerBot", "KillBurst", "SpinBot",
-    "TargetAcq", "AimVariance", "BhopVariance"
+    "TargetAcq", "AimVariance", "BhopVariance", "ShotDecision"
 };
 
 void Correlation_Init(int client)

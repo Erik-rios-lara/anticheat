@@ -66,6 +66,7 @@ enum struct TA_Session
     bool EndedInShot;
     bool Reached;
     float ClosedAt;
+    int Target; // client index this session was tracking, for Shot Decision Analysis to match against
 }
 
 // ------------------------------------------------------------------
@@ -146,6 +147,7 @@ static void TA_CloseSession(int client, bool endedInShot)
     sess.EndedInShot = endedInShot;
     sess.ClosedAt = GetGameTime();
     sess.Reached = g_TA_SessionReachedOnTarget[client];
+    sess.Target = g_TA_SessionTarget[client];
 
     if (sess.Reached)
     {
@@ -352,4 +354,35 @@ int TargetAcq_GetScore(int client)
 
     float combined = SquareRoot(timingScore * monoScore);
     return RoundFloat(combined);
+}
+
+// ------------------------------------------------------------------
+// Public: for Shot Decision Analysis. By the time Hook_TraceAttack fires
+// for a shot, OnPlayerRunCmd for that same tick has already run and
+// closed the acquisition session (if the shot ended one) into the
+// history - so this looks at the MOST RECENTLY CLOSED session against
+// `victim`, and only accepts it if it closed within the last 100ms (the
+// same tick or the very next one - anything older isn't this shot's
+// acquisition). Returns -1.0 if no matching recent session is found.
+float TargetAcq_GetRecentDecisionTimeMs(int client, int victim)
+{
+    int total = g_TA_HistoryCount[client];
+    if (total == 0) return -1.0;
+
+    float now = GetGameTime();
+    int head = g_TA_HistoryHead[client];
+
+    // Walk backward from the most recently written slot.
+    int checks = total < TA_SESSION_HISTORY ? total : TA_SESSION_HISTORY;
+    for (int k = 1; k <= checks; k++)
+    {
+        int idx = (head - k + TA_SESSION_HISTORY) % TA_SESSION_HISTORY;
+        if (g_TA_History[client][idx].Target != victim) continue;
+        if (!g_TA_History[client][idx].Reached) continue;
+        if (now - g_TA_History[client][idx].ClosedAt > 0.1) break; // too old - stop, history is time-ordered
+
+        return g_TA_History[client][idx].AcquisitionTimeMs;
+    }
+
+    return -1.0;
 }

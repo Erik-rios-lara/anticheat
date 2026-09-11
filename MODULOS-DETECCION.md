@@ -92,6 +92,26 @@ Ambas se miden con coeficiente de variación (no varianza cruda) para ser indepe
 
 ---
 
+## 1d. Shot Decision Analysis (`anticheat_shotdecision.sp`) — se combina con Aim (máximo)
+
+Target Acquisition mide cuánto tarda la adquisición. TriggerBot (dentro de OSAC) mide el instante del cruce al disparo. Ninguno de los dos correlaciona ese tiempo contra el **contexto** del disparo — qué arma se sostenía, a qué distancia estaba el objetivo. Este módulo cierra ese hueco: toma el tiempo de adquisición que Target Acquisition ya midió para la sesión que terminó en un disparo, y lo combina con el arma y la distancia de ese disparo específico.
+
+### Por qué el contexto importa
+
+El tiempo de decisión de un humano **no es un número fijo** — depende del arma (una ráfaga con SMG se decide distinto que alinear un solo disparo de rifle de precisión) y de la distancia (un objetivo cercano es más urgente pero más fácil de acertar; uno lejano exige más cuidado). Un script de enganche-y-disparo típicamente no modela nada de esto: converge y dispara con un ritmo similar sin importar qué arma tiene equipada o qué tan lejos está el objetivo.
+
+### Cómo funciona
+
+Cada disparo calificado (con una sesión de adquisición real detrás, no una suposición) se clasifica en un "bucket" según **clase de arma** (precisión: rifle de caza, francotirador, Desert Eagle, Magnum — vs. rápida: todo lo demás) y **banda de distancia** (cerca <300u, media, lejos ≥700u) — 6 combinaciones posibles. Con al menos 2 buckets distintos poblados (≥4 disparos cada uno), se compara el **tiempo de decisión promedio entre buckets**.
+
+Se mide con coeficiente de variación de las medias de los buckets respecto al promedio general — un humano normalmente cambia su timing en más de 20-30% entre un disparo rápido de cerca y uno de precisión lejano. Que el timing se mantenga sospechosamente plano a través de contextos que deberían producir comportamiento distinto es la señal: un script "ciego al contexto".
+
+**Umbral:** ≥2 buckets con ≥4 disparos cada uno. Coeficiente de variación entre buckets por debajo de 0.20 para empezar a puntuar.
+
+**Rendimiento:** no agrega ningún costo por tick — solo se evalúa en el momento del disparo (`Hook_TraceAttack`, ya se ejecuta para cada impacto) y reutiliza el tiempo que Target Acquisition ya calculó.
+
+---
+
 ## 2. Bhop (`anticheat_bhop.sp`) — peso 22%
 
 Detecta bunny-hop automatizado (scripts que saltan en el tick exacto de aterrizaje para no perder velocidad), combinando **3 métricas**.

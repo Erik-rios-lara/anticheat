@@ -111,6 +111,7 @@ void AC_RefreshSpecialCache()
 #include "anticheat_aim.sp"
 #include "anticheat_targetacq.sp"
 #include "anticheat_variance.sp"
+#include "anticheat_shotdecision.sp"
 #include "anticheat_bhop.sp"
 #include "anticheat_bhop2.sp"
 #include "anticheat_integrity.sp"
@@ -231,6 +232,7 @@ public void OnPluginStart()
             Correlation_Init(i);
             TargetAcq_Init(i);
             Variance_Init(i);
+            ShotDecision_Init(i);
             g_ScoreTimer[i] = CreateTimer(SCORE_TIMER_TICK, Timer_Score, i, TIMER_REPEAT | TIMER_FLAG_NO_MAPCHANGE);
         }
     }
@@ -260,6 +262,7 @@ public void OnClientPutInServer(int client)
     Correlation_Init(client);
     TargetAcq_Init(client);
     Variance_Init(client);
+    ShotDecision_Init(client);
 
     AC_Log("[AntiCheat] Player %N (%d) connected", client, client);
 }
@@ -353,6 +356,17 @@ public Action Hook_TraceAttack(int victim, int &attacker, int &inflictor, float 
     float attackerAngles[3];
     GetClientEyeAngles(attacker, attackerAngles);
     OSAC_RecordShot(attacker, victim, hitgroup, attackerAngles);
+
+    // Shot Decision Analysis: correlate this shot's context (weapon,
+    // range) against the acquisition time TargetAcq measured for the
+    // session that led to it, if any.
+    float attackerPos[3], victimPos[3];
+    GetClientAbsOrigin(attacker, attackerPos);
+    GetClientAbsOrigin(victim, victimPos);
+    float range = GetVectorDistance(attackerPos, victimPos);
+    float decisionTimeMs = TargetAcq_GetRecentDecisionTimeMs(attacker, victim);
+    ShotDecision_RecordShot(attacker, victim, hitgroup, decisionTimeMs, range);
+
     return Plugin_Continue;
 }
 
@@ -390,6 +404,8 @@ public Action Timer_Score(Handle timer, any client)
     if (targetAcqScore > aimScore) aimScore = targetAcqScore; // independent aim-side signal, take the worst
     int aimVarScore = Variance_GetAimScore(client);
     if (aimVarScore > aimScore) aimScore = aimVarScore; // per-player angular-velocity consistency profile
+    int shotDecisionScore = ShotDecision_GetScore(client);
+    if (shotDecisionScore > aimScore) aimScore = shotDecisionScore; // context-blind shot timing profile
     int bhopScore   = Bhop_GetScore(client);
     int bhop2Score  = Bhop2_GetScore(client);
     if (bhop2Score > bhopScore) bhopScore = bhop2Score; // two independent bhop detectors, take the worst
@@ -702,6 +718,7 @@ public Action Command_Reload(int client, int args)
         Correlation_Init(i);
         TargetAcq_Init(i);
         Variance_Init(i);
+        ShotDecision_Init(i);
         g_HighRiskStreak[i] = 0;
         g_SuspicionTier[i] = 0;
         g_TierLastEvidence[i] = GetGameTime();
@@ -761,7 +778,7 @@ public Action Event_RoundStart(Event event, const char[] name, bool dontBroadcas
     for (int i = 1; i <= MaxClients; i++)
     {
         if (IsClientInGame(i) && !IsFakeClient(i) && g_PlayerActive[i])
-        { Aim_Init(i); Bhop_Init(i); Bhop2_Init(i); Integrity_Init(i); OSAC_Init(i); TargetAcq_Init(i); Variance_Init(i); }
+        { Aim_Init(i); Bhop_Init(i); Bhop2_Init(i); Integrity_Init(i); OSAC_Init(i); TargetAcq_Init(i); Variance_Init(i); ShotDecision_Init(i); }
     }
     PrintToServer("[AntiCheat] Round start - module data reset.");
     return Plugin_Continue;
