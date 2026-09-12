@@ -362,6 +362,11 @@ void Menu_ShowPlayerDetail(int client, int target)
         FormatEx(line, sizeof(line), "Correlacion: %s", corrDesc);
         panel.DrawText(line);
     }
+
+    char scanDesc[64];
+    ScanVerify_Describe(target, scanDesc, sizeof(scanDesc));
+    FormatEx(line, sizeof(line), "Escaneo PC: %s", scanDesc);
+    panel.DrawText(line);
     panel.DrawText("------------------------");
 
     panel.CurrentKey = 1;

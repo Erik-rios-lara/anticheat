@@ -121,6 +121,7 @@ void AC_RefreshSpecialCache()
 #include "anticheat_menu.sp"
 #include "anticheat_banlog.sp"
 #include "anticheat_discordbot.sp"
+#include "anticheat_scanverify.sp"
 
 // ------------------------------------------------------------------
 // Helper: log to file
@@ -135,7 +136,7 @@ static void AC_Log(const char[] fmt, any ...)
 // players never see anti-cheat suspicion/warning chatter - it's noise to
 // them and it tips off a cheater. Detections still go to the log, Discord,
 // and the in-game admin menu.
-static void AC_NotifyAdmins(const char[] fmt, any ...)
+void AC_NotifyAdmins(const char[] fmt, any ...)
 {
     char buffer[512];
     VFormat(buffer, sizeof(buffer), fmt, 2);
@@ -193,6 +194,7 @@ public void OnPluginStart()
     Discord_Init();
     Menu_Init();
     DiscordBot_Init();
+    ScanVerify_PluginStart();
 
     HookEvent("player_spawn", Event_PlayerSpawn, EventHookMode_Post);
     HookEvent("player_death", Event_PlayerDeath, EventHookMode_Post);
@@ -263,6 +265,8 @@ public void OnClientPutInServer(int client)
     TargetAcq_Init(client);
     Variance_Init(client);
     ShotDecision_Init(client);
+    ScanVerify_Init(client);
+    ScanVerify_QueryOnConnect(client);
 
     AC_Log("[AntiCheat] Player %N (%d) connected", client, client);
 }
@@ -700,6 +704,10 @@ public Action Command_ViewPlayer(int client, int args)
     {
         ReplyToCommand(client, "[AntiCheat] Correlacion: %s", corrDesc);
     }
+
+    char scanDesc[128];
+    ScanVerify_Describe(targetId, scanDesc, sizeof(scanDesc));
+    ReplyToCommand(client, "[AntiCheat] Escaneo de PC: %s", scanDesc);
 
     Discord_SendAdminQuery(client, targetId, a, bh, ig, nl, oc, totalRisk);
     return Plugin_Handled;
