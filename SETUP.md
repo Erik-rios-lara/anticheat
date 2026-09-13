@@ -79,7 +79,38 @@ sm plugins list
 
 Debe aparecer `anticheat_core` como `Running`. Si el servidor está vacío, reiniciar el mapa (`changelevel` al mapa actual) también sirve, pero normalmente no hace falta.
 
-## 6. Flujo de trabajo día a día
+## 6. Activar/desactivar el anti-cheat con un .bat
+
+Como el servidor es un listen server (se juega desde el propio cliente de L4D2, sin RCON ni un `srcds.exe` dedicado), no hay forma de mandarle comandos por red desde fuera del juego. El script `anticheat_toggle.bat` (en la raíz del repo) resuelve esto moviendo el archivo del plugin dentro/fuera de la carpeta `plugins` — SourceMod solo carga lo que encuentra ahí.
+
+Ábrelo con doble clic. Muestra un menú:
+
+```
+============================================
+  Anti-Cheat L4D2 - Activar / Desactivar
+============================================
+
+Estado actual: ACTIVADO
+
+  [1] Activar el anti-cheat
+  [2] Desactivar el anti-cheat
+  [3] Ver estado
+  [4] Salir
+```
+
+- **Desactivar** renombra `anticheat_core.smx` → `anticheat_core.smx.disabled`.
+- **Activar** hace lo inverso.
+
+En ambos casos el cambio en disco no toma efecto solo hasta que se lo pidas al servidor. En la consola del juego (tecla `~`), según lo que hayas elegido:
+
+```
+sm plugins unload anticheat_core   " después de desactivar
+sm plugins refresh                 " después de activar
+```
+
+> **Antes de usarlo la primera vez**, abre `anticheat_toggle.bat` con un editor de texto y revisa que `PLUGINS_DIR` apunte a la instalación real de L4D2 en tu PC — la ruta que trae por defecto es la de mi máquina, la tuya seguramente es distinta (letra de unidad, carpeta de Steam, etc.).
+
+## 7. Flujo de trabajo día a día
 
 Para que los cambios de ambos no se pisen, la rutina normal es:
 
