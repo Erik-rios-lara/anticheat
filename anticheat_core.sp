@@ -38,12 +38,18 @@ ConVar g_cvAdminImmunity;
 // so they carry real weight despite being small slices - when any of them
 // fires at all, it's meaningful. Bhop2 is a second independent bhop
 // detector; its score folds into the Bhop slot (max of the two) rather
-// than getting its own weight.
-#define WEIGHT_AIM        0.42
-#define WEIGHT_BHOP        0.22
+// than getting its own weight. Speedhack and Noclip (anticheat_integrity.sp)
+// are the same kind of "logic breach" evidence and fold into the
+// Integrity slot for the same reason. Macro is deliberately kept small -
+// unlike the logic-breach checks, a tight-clustering hold duration is a
+// real but softer statistical tell (not structurally impossible), so it
+// contributes but never dominates totalRisk on its own.
+#define WEIGHT_AIM        0.40
+#define WEIGHT_BHOP        0.21
 #define WEIGHT_INTEGRITY   0.11
 #define WEIGHT_NOLERP      0.10
-#define WEIGHT_OSAC        0.15
+#define WEIGHT_OSAC        0.14
+#define WEIGHT_MACRO       0.04
 
 // ------------------------------------------------------------------
 // Per-player data
@@ -115,6 +121,7 @@ void AC_RefreshSpecialCache()
 #include "anticheat_bhop.sp"
 #include "anticheat_bhop2.sp"
 #include "anticheat_integrity.sp"
+#include "anticheat_macro.sp"
 #include "anticheat_nolerp.sp"
 #include "anticheat_osac.sp"
 #include "anticheat_discord.sp"
@@ -257,6 +264,7 @@ public void OnClientPutInServer(int client)
     Bhop_Init(client);
     Bhop2_Init(client);
     Integrity_Init(client);
+    Macro_Init(client);
     NoLerp_Init(client);
     OSAC_Init(client);
     Correlation_Init(client);
@@ -302,6 +310,7 @@ public Action OnPlayerRunCmd(int client, int &buttons, int &impulse,
     Bhop_RecordTick(client, buttons, angles);
     Bhop2_RecordTick(client, buttons);
     Integrity_RecordTick(client, angles, buttons, cmdnum, tickcount);
+    Macro_RecordTick(client, buttons);
     OSAC_RecordTick(client, angles);
     Variance_RecordBhopTick(client, buttons); // cheap, no per-client scan - profiles jump timing distribution
 
@@ -413,12 +422,14 @@ public Action Timer_Score(Handle timer, any client)
     int integrityScore = Integrity_GetScore(client);
     int noLerpScore = NoLerp_GetScore(client);
     int osacScore   = OSAC_GetScore(client);
+    int macroScore  = Macro_GetScore(client);
 
     float risk = float(aimScore) * WEIGHT_AIM
                + float(bhopScore) * WEIGHT_BHOP
                + float(integrityScore) * WEIGHT_INTEGRITY
                + float(noLerpScore) * WEIGHT_NOLERP
-               + float(osacScore) * WEIGHT_OSAC;
+               + float(osacScore) * WEIGHT_OSAC
+               + float(macroScore) * WEIGHT_MACRO;
 
     // --- Cross-Detector Correlation ---
     // The weighted sum above treats "one module mildly suspicious" and
@@ -672,13 +683,14 @@ public Action Command_ViewPlayer(int client, int args)
     int ig = Integrity_GetScore(targetId);
     int nl = NoLerp_GetScore(targetId);
     int oc = OSAC_GetScore(targetId);
-    float risk = float(a)*WEIGHT_AIM + float(bh)*WEIGHT_BHOP + float(ig)*WEIGHT_INTEGRITY + float(nl)*WEIGHT_NOLERP + float(oc)*WEIGHT_OSAC;
+    int mc = Macro_GetScore(targetId);
+    float risk = float(a)*WEIGHT_AIM + float(bh)*WEIGHT_BHOP + float(ig)*WEIGHT_INTEGRITY + float(nl)*WEIGHT_NOLERP + float(oc)*WEIGHT_OSAC + float(mc)*WEIGHT_MACRO;
     int corrDistinct;
     float corrMult = Correlation_GetMultiplierEx(targetId, corrDistinct);
     risk *= corrMult;
     int totalRisk = RoundFloat(risk);
     if (totalRisk > 100) totalRisk = 100;
-    ReplyToCommand(client, "[AntiCheat] %N - Aim:%d Bhop:%d Integrity:%d NoLerp:%d OSAC:%d => Risk:%d (corr x%.2f)", targetId, a, bh, ig, nl, oc, totalRisk, corrMult);
+    ReplyToCommand(client, "[AntiCheat] %N - Aim:%d Bhop:%d Integrity:%d NoLerp:%d OSAC:%d Macro:%d => Risk:%d (corr x%.2f)", targetId, a, bh, ig, nl, oc, mc, totalRisk, corrMult);
 
     int moduleScoresView[5];
     moduleScoresView[0] = a; moduleScoresView[1] = bh; moduleScoresView[2] = ig;
