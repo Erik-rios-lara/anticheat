@@ -73,6 +73,7 @@ enum CorrelationDetector
     CORR_DET_SPEEDHACK,          // Timescale/command-rate manipulation (anticheat_integrity.sp)
     CORR_DET_NOCLIP,             // Position crossed solid geometry (anticheat_integrity.sp)
     CORR_DET_MACRO,              // Generic tick-perfect key timing on any action button (anticheat_macro.sp)
+    CORR_DET_AIMDRIFT,           // Aim Drift - error-reduction rate vs. live lobby baseline (anticheat_aimdrift.sp)
     CORR_DET_COUNT               // sentinel - keep last
 };
 
@@ -99,7 +100,7 @@ static char g_Corr_DetectorNames[CORR_DET_COUNT][24] = {
     "BoneLock", "SilentAim", "TriggerBot", "KillBurst", "SpinBot",
     "TargetAcq", "AimVariance", "BhopVariance", "ShotDecision",
     "BhopTurnRate", "BhopSync", "NoSpread",
-    "Speedhack", "Noclip", "Macro"
+    "Speedhack", "Noclip", "Macro", "AimDrift"
 };
 
 void Correlation_Init(int client)

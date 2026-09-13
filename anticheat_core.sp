@@ -115,6 +115,7 @@ void AC_RefreshSpecialCache()
 #include "anticheat_correlation.sp"
 #include "anticheat_evidence.sp"
 #include "anticheat_aim.sp"
+#include "anticheat_aimdrift.sp"
 #include "anticheat_targetacq.sp"
 #include "anticheat_variance.sp"
 #include "anticheat_shotdecision.sp"
@@ -246,6 +247,15 @@ public void OnPluginStart()
 }
 
 // ------------------------------------------------------------------
+// Aim Drift's baseline is intentionally map-scoped (different maps have
+// different sightlines/geometry that would otherwise skew what "honest"
+// looks like) - reset the pooled totals each time a new map loads.
+public void OnMapStart()
+{
+    AimDrift_OnMapStart();
+}
+
+// ------------------------------------------------------------------
 public void OnClientPutInServer(int client)
 {
     if (client <= 0 || client > MaxClients) return;
@@ -261,6 +271,7 @@ public void OnClientPutInServer(int client)
     
 
     Aim_Init(client);
+    AimDrift_Init(client);
     Bhop_Init(client);
     Bhop2_Init(client);
     Integrity_Init(client);
@@ -344,6 +355,11 @@ public Action OnPlayerRunCmd(int client, int &buttons, int &impulse,
             // trajectory requirement as Target Acquisition, so it shares
             // the same lack of throttling and the same tier gate.
             Variance_RecordAimTick(client, angles);
+
+            // Aim Drift needs every engaged tick to measure the
+            // step-by-step error-reduction rate correctly - same
+            // reasoning and gating as Target Acquisition/Variance above.
+            AimDrift_RecordTick(client, angles);
         }
     }
 
@@ -414,6 +430,8 @@ public Action Timer_Score(Handle timer, any client)
     if (aimVarScore > aimScore) aimScore = aimVarScore; // per-player angular-velocity consistency profile
     int shotDecisionScore = ShotDecision_GetScore(client);
     if (shotDecisionScore > aimScore) aimScore = shotDecisionScore; // context-blind shot timing profile
+    int aimDriftScore = AimDrift_GetScore(client);
+    if (aimDriftScore > aimScore) aimScore = aimDriftScore; // error-reduction rate vs. live lobby baseline
     int bhopScore   = Bhop_GetScore(client);
     int bhop2Score  = Bhop2_GetScore(client);
     if (bhop2Score > bhopScore) bhopScore = bhop2Score; // two independent bhop detectors, take the worst
