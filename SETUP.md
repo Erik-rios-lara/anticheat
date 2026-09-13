@@ -1,35 +1,78 @@
-# Poner el anti-cheat a correr en otra PC
+# Instalar el anti-cheat en tu propio servidor de L4D2
 
-Guía para clonar el plugin, compilarlo con SourceMod, y subirlo al mismo servidor de L4D2 que ya estamos usando. Pensada para alguien que va a tocar el código, no solo jugar.
+Guía para levantar el anti-cheat de cero en tu propia PC/servidor: instalar Metamod:Source y SourceMod, clonar el plugin, compilarlo, y dejarlo corriendo.
 
 Repositorio: https://github.com/Erik-rios-lara/anticheat
 
 ## 1. Requisitos
 
-Dos cosas hacen falta antes de tocar código: Git para bajar el repositorio, y el compilador de SourcePawn (`spcomp`) para convertir el `.sp` en el `.smx` que SourceMod realmente ejecuta. El compilador ya viene incluido dentro del propio repo, así que no hay que instalar SourceMod completo en esta PC — solo Git.
-
 - **Git** — https://git-scm.com/downloads, instalación por defecto sirve.
 - **Un editor de texto/código** — VS Code recomendado, con la extensión `SourcePawn` del marketplace para resaltado de sintaxis.
+- **Left 4 Dead 2 (servidor dedicado o listen server) ya instalado** en tu PC, con una carpeta `left4dead2/` accesible.
 
-No hace falta instalar un servidor de L4D2 local ni SourceMod completo en esta PC — el servidor real ya está corriendo donde siempre, solo vamos a compilar aquí y subir el archivo resultante ahí.
+El compilador de SourcePawn (`spcomp`) ya viene incluido dentro del propio repo — no hace falta instalarlo aparte.
 
-## 2. Clonar el repositorio
+## 2. Instalar Metamod:Source
 
-El repo es público, así que no necesitas que te invite como colaborador para clonarlo y compilar en tu máquina. Abre una terminal donde quieras guardar el proyecto y corre:
+SourceMod (y por lo tanto el anti-cheat) no puede cargar sin Metamod:Source primero — es la capa que engancha plugins al motor del juego. El repo trae SourceMod completo, pero **no trae Metamod:Source** porque son binarios de plataforma que no se versionan en git.
+
+1. Descarga la build estable más reciente para Windows desde https://www.sourcemm.net/downloads.php (elige la de **Windows**, no Linux).
+2. Extrae el `.zip` directamente dentro de tu carpeta `left4dead2/` — debe quedar así:
+
+   ```
+   left4dead2/
+   ├── addons/
+   │   ├── metamod.vdf          " lo trae Metamod
+   │   └── metamod/
+   │       └── ... (bin, server.dll, etc.)
+   └── ...
+   ```
+3. Inicia el servidor una vez y escribe en su consola:
+
+   ```
+   meta version
+   ```
+
+   Si responde con la versión de Metamod instalada, quedó bien puesto.
+
+## 3. Clonar el repositorio del anti-cheat
+
+El repo es público, no necesitas invitación para clonarlo.
 
 ```bash
-# Windows (PowerShell o Git Bash), en la carpeta donde quieras el proyecto
 git clone https://github.com/Erik-rios-lara/anticheat.git
 cd anticheat
 ```
 
-Esto trae los 20+ archivos `.sp` del anti-cheat (aim, bhop, integrity, correlation, evidence, etc.), el compilador `spcomp.exe`, y el bot de Discord en `discord-bot/`.
+Esto trae `addons/sourcemod/` completo (binarios, extensions, gamedata, plugins base, traducciones), los 20+ archivos `.sp` del anti-cheat (aim, bhop, integrity, correlation, evidence, etc.), el compilador `spcomp.exe`, y el bot de Discord en `discord-bot/`.
 
-## 3. Compilar el plugin
+## 4. Copiar SourceMod a tu servidor
+
+Copia la carpeta `addons/sourcemod/` del repo (junto con `addons/metamod/sourcemod.vdf`, que ya viene incluido) dentro de tu `left4dead2/`, fusionándola con la que dejó Metamod en el paso 2:
+
+```
+left4dead2/
+├── addons/
+│   ├── metamod.vdf
+│   ├── metamod/            " de Metamod:Source (paso 2)
+│   ├── sourcemod.vdf        " del repo
+│   └── sourcemod/           " del repo
+└── ...
+```
+
+Reinicia el servidor y en consola confirma:
+
+```
+sm version
+```
+
+Si responde con la versión de SourceMod, ya está enganchado correctamente sobre Metamod.
+
+## 5. Compilar el plugin
 
 El archivo principal es `anticheat_core.sp` — incluye a todos los demás módulos vía `#include`, así que compilarlo a él genera el `.smx` completo.
 
-Dentro de la carpeta `anticheat/`:
+Dentro de la carpeta `anticheat/` (donde clonaste el repo, no necesariamente donde está el servidor):
 
 ```bash
 # Git Bash
@@ -49,39 +92,64 @@ anticheat_core.sp(32) : warning 204: symbol is assigned a value that is never us
 1 Warning.
 ```
 
-> **Si ves "Error"** en vez de solo warnings, el `.smx` no se generó — no lo subas al servidor. Pega el error completo en el chat del equipo antes de continuar.
+> **Si ves "Error"** en vez de solo warnings, el `.smx` no se generó — no lo copies al servidor.
 
-## 4. Subir el .smx al servidor compartido
+## 6. Copiar el plugin compilado y activarlo
 
-Como vamos a usar el mismo servidor de L4D2 que ya tenemos, este paso es copiar el archivo compilado a la carpeta de plugins de ese servidor — reemplazando el que ya está ahí.
-
-| Archivo | Destino en el servidor |
-|---|---|
-| `anticheat_core.smx` | `addons/sourcemod/plugins/` |
-
-Cómo llega el archivo hasta ahí depende de cómo esté hosteado el servidor — pide el acceso (SFTP, panel del host, o carpeta compartida si corre en una PC) y comparte los datos de conexión exactos por un canal privado, no en el repo.
-
-> **Coordinen antes de subir** — si los dos compilan y suben al mismo tiempo, uno pisa el cambio del otro sin que se note hasta que algo se comporta raro en partida.
-
-## 5. Recargar el plugin sin reiniciar el servidor
-
-Con el `.smx` nuevo ya en su carpeta, en la consola del servidor (o vía RCON):
+Copia el `anticheat_core.smx` recién compilado a:
 
 ```
-sm plugins reload anticheat_core
+left4dead2/addons/sourcemod/plugins/
 ```
 
-Confirma que tomó el cambio:
+Reinicia el servidor (o si ya estaba corriendo, en su consola):
 
 ```
+sm plugins refresh
 sm plugins list
 ```
 
-Debe aparecer `anticheat_core` como `Running`. Si el servidor está vacío, reiniciar el mapa (`changelevel` al mapa actual) también sirve, pero normalmente no hace falta.
+Debe aparecer `anticheat_core` como `Running`.
 
-## 6. Activar/desactivar el anti-cheat con un .bat
+## 7. Configurar el bot de Discord
 
-Como el servidor es un listen server (se juega desde el propio cliente de L4D2, sin RCON ni un `srcds.exe` dedicado), no hay forma de mandarle comandos por red desde fuera del juego. El script `anticheat_toggle.bat` (en la raíz del repo) resuelve esto moviendo el archivo del plugin dentro/fuera de la carpeta `plugins` — SourceMod solo carga lo que encuentra ahí.
+El plugin y el bot se comunican por archivos JSON en una carpeta local del disco (`addons/sourcemod/data/anticheat_ipc/`) — **no por red**. Eso significa que el bot tiene que correr en la MISMA PC donde corre el servidor de L4D2, aunque siga publicando en el mismo servidor/canal de Discord de siempre.
+
+El anti-cheat funciona sin esto — las detecciones y kicks automáticos ocurren igual solo con el plugin. El bot solo agrega la notificación con botones de Kick/Ban en Discord.
+
+**Requisito:** [Node.js](https://nodejs.org/) (versión LTS) instalado en la PC.
+
+1. Dentro del repo ya clonado:
+
+   ```bash
+   cd discord-bot
+   npm install
+   ```
+
+2. Crea un archivo `.env` en `discord-bot/` (no viene en el repo — contiene el token del bot, es secreto). Pide el contenido por un canal privado, con este formato, ajustando solo `ANTICHEAT_IPC_DIR` a la ruta real del servidor en esta PC:
+
+   ```
+   DISCORD_BOT_TOKEN=<el mismo token que ya usamos>
+   DISCORD_CHANNEL_ID=<el mismo canal de siempre>
+   DISCORD_ADMIN_ROLE_ID=<el mismo rol de admin de siempre>
+   ANTICHEAT_IPC_DIR=<ruta local a left4dead2\addons\sourcemod\data\anticheat_ipc>
+   ```
+
+   Como el token, canal y rol son los mismos de siempre, el bot sigue publicando en el mismo servidor de Discord donde ya estaban las alertas — solo cambia desde qué PC corre y qué carpeta de disco está leyendo.
+
+3. Arráncalo:
+
+   ```bash
+   node bot.js
+   ```
+
+   Debe imprimir `[OK] Bot conectado como <nombre>#1234`. Déjalo corriendo mientras el servidor de L4D2 esté activo — si se cierra, las alertas se siguen generando pero nadie las publica en Discord hasta que se vuelva a levantar.
+
+> **Nunca compartan el `.env` por el repo ni por chats públicos** — quien tenga el token puede controlar el bot completo.
+
+## 8. Activar/desactivar el anti-cheat con un .bat
+
+El script `anticheat_toggle.bat` (en la raíz del repo) prende/apaga el plugin sin tener que borrar ni recompilar nada, moviendo el archivo dentro/fuera de la carpeta `plugins` — SourceMod solo carga lo que encuentra ahí.
 
 Ábrelo con doble clic. Muestra un menú:
 
@@ -101,27 +169,27 @@ Estado actual: ACTIVADO
 - **Desactivar** renombra `anticheat_core.smx` → `anticheat_core.smx.disabled`.
 - **Activar** hace lo inverso.
 
-En ambos casos el cambio en disco no toma efecto solo hasta que se lo pidas al servidor. En la consola del juego (tecla `~`), según lo que hayas elegido:
+En ambos casos el cambio en disco no toma efecto hasta que se lo pidas al servidor. En su consola (o la del juego si es listen server, tecla `~`), según lo que hayas elegido:
 
 ```
 sm plugins unload anticheat_core   " después de desactivar
 sm plugins refresh                 " después de activar
 ```
 
-> **Antes de usarlo la primera vez**, abre `anticheat_toggle.bat` con un editor de texto y revisa que `PLUGINS_DIR` apunte a la instalación real de L4D2 en tu PC — la ruta que trae por defecto es la de mi máquina, la tuya seguramente es distinta (letra de unidad, carpeta de Steam, etc.).
+> **Antes de usarlo la primera vez**, abre `anticheat_toggle.bat` con un editor de texto y ajusta `PLUGINS_DIR` a la ruta real de tu instalación de L4D2 — la que trae por defecto es de ejemplo, no la tuya.
 
-## 7. Flujo de trabajo día a día
+## 9. Mantenerlo actualizado
 
-Para que los cambios de ambos no se pisen, la rutina normal es:
+Cuando salgan cambios nuevos al anti-cheat (nuevos detectores, ajustes, fixes), solo necesitas repetir los pasos 3, 5 y 6 — no hace falta reinstalar Metamod ni SourceMod de nuevo:
 
-1. Antes de editar: `git pull` para traer lo último que el otro subió.
-2. Edita el/los archivo(s) `.sp` que correspondan al módulo que estás tocando.
-3. Compila local (paso 3) y revisa que no salgan errores nuevos.
-4. `git add`, `git commit -m "..."`, `git push` — así el otro ve tu cambio en el historial.
-5. Solo entonces sube el `.smx` compilado al servidor y recarga (pasos 4-5).
+```bash
+cd anticheat
+git pull
+./addons/sourcemod/scripting/spcomp.exe anticheat_core.sp -o anticheat_core.smx
+```
 
-El `.smx` compilado nunca se sube a GitHub (está en `.gitignore`) — cada quien compila su propia copia desde el mismo código fuente, así el repo se queda solo con lo que de verdad importa versionar: el `.sp`.
+Y copiar el `.smx` resultante a tu carpeta `plugins/`, seguido de `sm plugins refresh`.
 
 ---
 
-Módulos activos ahora mismo: aim (headshot ratio, psilent, autoshoot, fov lock), bhop, bhop2, integrity, nolerp, osac, correlation, evidence, target acquisition, variance profiling, shot decision — más el bot de Discord para alertas de kick. Cualquier duda de un módulo específico, pregunten en el chat antes de tocarlo a ciegas.
+Módulos activos ahora mismo: aim (headshot ratio, psilent, autoshoot, fov lock), bhop, bhop2, integrity, nolerp, osac, correlation, evidence, target acquisition, variance profiling, shot decision — más el bot de Discord para alertas de kick (mismo servidor/canal de Discord de siempre, corriendo ahora desde la nueva PC).
