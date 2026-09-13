@@ -192,4 +192,4 @@ Y copiar el `.smx` resultante a tu carpeta `plugins/`, seguido de `sm plugins re
 
 ---
 
-Módulos activos ahora mismo: aim (headshot ratio, psilent, autoshoot, fov lock), bhop, bhop2, integrity, nolerp, osac, correlation, evidence, target acquisition, variance profiling, shot decision — más el bot de Discord para alertas de kick (mismo servidor/canal de Discord de siempre, corriendo ahora desde la nueva PC).
+Módulos activos ahora mismo: aim (headshot ratio, psilent, autoshoot, fov lock, no-spread), aim drift, tracking (kinemática del seguimiento), bhop (incluye static turn rate y strafe-key sync), bhop2, integrity (incluye speedhack y noclip), nolerp, osac, macro (deteccion generica de teclas con timing de script), correlation, evidence, target acquisition, variance profiling, shot decision — más el bot de Discord para alertas de kick (mismo servidor/canal de Discord de siempre, corriendo ahora desde la nueva PC).
