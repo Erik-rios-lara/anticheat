@@ -116,6 +116,7 @@ void AC_RefreshSpecialCache()
 #include "anticheat_evidence.sp"
 #include "anticheat_aim.sp"
 #include "anticheat_aimdrift.sp"
+#include "anticheat_tracking.sp"
 #include "anticheat_targetacq.sp"
 #include "anticheat_variance.sp"
 #include "anticheat_shotdecision.sp"
@@ -272,6 +273,7 @@ public void OnClientPutInServer(int client)
 
     Aim_Init(client);
     AimDrift_Init(client);
+    Tracking_Init(client);
     Bhop_Init(client);
     Bhop2_Init(client);
     Integrity_Init(client);
@@ -360,6 +362,11 @@ public Action OnPlayerRunCmd(int client, int &buttons, int &impulse,
             // step-by-step error-reduction rate correctly - same
             // reasoning and gating as Target Acquisition/Variance above.
             AimDrift_RecordTick(client, angles);
+
+            // Tracking kinematics needs the full per-tick trajectory of
+            // an engagement to measure its shape - same reasoning and
+            // gating as the other session-based modules above.
+            Tracking_RecordTick(client, angles);
         }
     }
 
@@ -432,6 +439,8 @@ public Action Timer_Score(Handle timer, any client)
     if (shotDecisionScore > aimScore) aimScore = shotDecisionScore; // context-blind shot timing profile
     int aimDriftScore = AimDrift_GetScore(client);
     if (aimDriftScore > aimScore) aimScore = aimDriftScore; // error-reduction rate vs. live lobby baseline
+    int trackingScore = Tracking_GetScore(client);
+    if (trackingScore > aimScore) aimScore = trackingScore; // tracking-path kinematic shape (straightness/critical points/asymmetry)
     int bhopScore   = Bhop_GetScore(client);
     int bhop2Score  = Bhop2_GetScore(client);
     if (bhop2Score > bhopScore) bhopScore = bhop2Score; // two independent bhop detectors, take the worst
