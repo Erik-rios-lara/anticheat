@@ -1,52 +1,73 @@
 # Módulos de detección — AntiCheat L4D2
 
-Este documento explica **qué hace cada módulo de detección**, cómo funciona técnicamente, y qué tipo de trampa detecta. El sistema combina 5 módulos independientes en un único **Risk Score (0-100)** evaluado cada 10 segundos por jugador.
+Este documento explica **qué hace cada módulo de detección**, cómo funciona técnicamente, y qué tipo de trampa detecta. El sistema combina 6 módulos con peso propio en un único **Risk Score (0-100)** evaluado cada 10 segundos por jugador.
 
 ```
-Risk = (Aim×42% + Bhop×22% + Integrity×11% + NoLerp×10% + OSAC×15%) × Multiplicador de Correlación
+Risk = (Aim×40% + Bhop×21% + Integrity×11% + NoLerp×10% + OSAC×14% + Macro×4%) × Multiplicador de Correlación
 ```
 
-(El módulo Bhop-2 no tiene peso propio: su puntaje se combina con el de Bhop tomando el máximo de ambos.)
+(Los módulos Bhop-2, Target Acquisition, Variance Profiling, Shot Decision, Aim Drift y Tracking no tienen peso propio: cada uno se combina tomando el máximo con el módulo Aim o Bhop al que pertenece conceptualmente. Speedhack y Noclip se combinan con Integrity de la misma forma.)
 
-Cada módulo produce su propia puntuación 0-100 de forma totalmente independiente — ninguno depende de los demás para funcionar. Esto es deliberado: un cheat puede evadir un módulo pero rara vez evade los 5 a la vez, y cuando **un solo módulo** llega a 60/100 por sí solo (`STRONG_MODULE_THRESHOLD`), eso ya es evidencia suficiente para expulsar al jugador aunque el Risk total combinado no llegue al umbral. **Este gate usa siempre el score individual de cada módulo, nunca el Risk ya multiplicado por correlación** — la correlación acelera qué tan rápido se junta evidencia ya confirmada, pero nunca sustituye la necesidad de que algún módulo confirme su propia evidencia primero.
+**Nota:** el módulo de WallHack fue removido del proyecto deliberadamente y no forma parte del sistema actual — todo lo documentado aquí abajo es detección de comportamiento de puntería, movimiento, disparo o integridad de paquetes, nunca de visión a través de geometría.
+
+Cada módulo produce su propia puntuación 0-100 de forma totalmente independiente — ninguno depende de los demás para funcionar. Esto es deliberado: un cheat puede evadir un módulo pero rara vez evade los 6 a la vez, y cuando **un solo módulo** llega a 60/100 por sí solo (`STRONG_MODULE_THRESHOLD`), eso ya es evidencia suficiente para expulsar al jugador aunque el Risk total combinado no llegue al umbral. **Este gate usa siempre el score individual de cada módulo, nunca el Risk ya multiplicado por correlación** — la correlación acelera qué tan rápido se junta evidencia ya confirmada, pero nunca sustituye la necesidad de que algún módulo confirme su propia evidencia primero.
 
 Archivo fuente de cada módulo entre paréntesis.
 
 ---
 
-## 1. Aim (`anticheat_aim.sp`) — peso 42%
+## 1. Aim (`anticheat_aim.sp`) — peso 40%
 
-El módulo más grande: combina **4 vías de detección distintas**, cada una mirando una señal diferente de aimbot/silent-aim. El score final de Aim es el **máximo** de las 4 (no la suma) — basta con que una sola vía dé evidencia fuerte. Además se combina (también por máximo) con el módulo Target Acquisition Analysis descrito más abajo.
+El módulo más grande. Por decisión deliberada del proyecto, **el score final de Aim (`Aim_GetScore`) solo se calcula a partir de patrones sobre el disparo/la bala en sí** — no sobre movimiento genérico de mira. Es el **máximo** de 5 vías activas. Además se combina (también por máximo) con Target Acquisition, Variance Profiling, Shot Decision, Aim Drift y Tracking, descritos más abajo.
 
-Filtro común a todas las vías: solo se evalúan disparos/ángulos contra **Infectados Especiales** (Smoker, Hunter, Boomer, Tank, etc. — no Comunes) y a una distancia mínima de 200 unidades, para no confundir el combate cuerpo a cuerpo legítimo (caótico por naturaleza) con evidencia de trampa.
+Cinco vías más antiguas (Headshot Snap+Consistencia, Angle Repeat, Cmdnum Spike, Aimlock, No-Recoil) **siguen ejecutándose y siguen reportando al motor de correlación cruzada**, pero ya no contribuyen directamente al score de este módulo — quedan documentadas al final de esta sección.
 
-### Vía 1 — Headshot Snap + Consistencia
-**Qué detecta:** el salto angular justo antes de un headshot a un Infectado Especial, evaluado por qué tan *consistente* es ese salto a lo largo de varios disparos.
+Filtro común a todas las vías activas: solo se evalúan disparos/ángulos contra **Infectados Especiales** (Smoker, Hunter, Boomer, Tank, etc. — no Comunes) y a una distancia mínima de 200 unidades, para no confundir el combate cuerpo a cuerpo legítimo (caótico por naturaleza) con evidencia de trampa.
 
-**Por qué funciona:** el servidor nunca puede saber si tu mira "de verdad" apuntaba a la cabeza o si un aimbot la corrigió — ambos casos producen el mismo dato final. Pero sí puede medir *cómo cambió* el ángulo entre el tick anterior y el del disparo. Un humano que hace un flick de pánico varía mucho el tamaño de ese salto de un disparo a otro; un script que autoajusta a la cabeza produce saltos de tamaño casi idéntico, una y otra vez (desviación estándar baja).
+### Vía 1 — Headshot Ratio
+**Qué detecta:** de todos los disparos que un jugador impacta sobre un Infectado Especial (cabeza o cuerpo), qué fracción son headshot.
 
-**Umbral:** salto ≥2.0°, se necesitan ≥5 disparos calificados, consistencia (desviación estándar) por debajo de 4.0° para puntuar alto.
+**Por qué funciona:** incluso un jugador muy bueno mezcla impactos de cuerpo/extremidades a lo largo de una muestra real — retroceso, movimiento, pánico. Un ratio pegado cerca del 100% sostenido en muchos disparos es la firma de un aimbot corrigiendo cada tiro a la cabeza sin importar dónde apuntaba realmente el crosshair.
 
-### Vía 2 — Angle Repeat (técnica de StAC-tf2)
-**Qué detecta:** un salto angular aislado mientras se dispara — ruido, SALTO, ruido, ruido — en 5 ticks consecutivos, sin requerir que sea headshot ni siquiera que impacte.
+**Umbral:** ≥8 disparos calificados, ratio de headshot ≥95% sostenido.
 
-**Por qué funciona:** un humano apuntando, incluso al "trabar" la mira sobre un objetivo, siempre tiene un poco de temblor de mano justo antes y después del ajuste. Un script que salta directo al objetivo y se queda perfectamente quieto produce un patrón muy específico: casi cero movimiento → un salto grande → casi cero movimiento otra vez. Es más difícil de evadir que un simple umbral de tamaño de salto, porque agregar "ruido" deliberado para camuflarlo arruina la puntería o reproduce el mismo patrón detectable.
+### Vía 2 — Psilent (técnica de StAC-tf2)
+**Qué detecta:** la mira salta al objetivo por exactamente **un tick** y regresa casi exactamente al ángulo anterior, en el mismo tick en que se dispara.
 
-**Umbral:** ruido <0.5°, salto >10°, se necesitan ≥5 eventos.
+**Por qué funciona:** es la firma de un cheat de silent-aim que "engancha" el disparo al blanco por un instante para que el motor registre el hit, y revierte la mira visible inmediatamente después para que el jugador no vea el salto. Se mide comparando 3 ticks consecutivos: si el más antiguo y el más nuevo coinciden casi exactamente (≤0.1°) mientras el del medio saltó ≥5° y coincide con el tick del disparo, es evidencia casi irrefutable — un humano no puede restaurar el ángulo exacto anterior tras una corrección real.
 
-### Vía 3 — Cmdnum Spike (técnica de StAC-tf2)
-**Qué detecta:** el número de comando (`cmdnum`) del cliente saltando varios valores de golpe en el mismo tick que se dispara.
+**Umbral:** ≥1 evento confirmado ya cuenta como evidencia fuerte (severidad base 60, sube con cada repetición).
 
-**Por qué funciona:** esto es completamente independiente de los ángulos de la mira — algunos cheats no tocan el mouse en absoluto, sino que manipulan el contador de secuencia de comandos para forzar un "disparo perfecto" que se salta el patrón de dispersión de balas (bullet spread) que el servidor aplicaría normalmente. Es justo el mecanismo detrás de "el recoil/dispersión del arma no se dispersa" al hacer trampa.
+### Vía 3 — Autoshoot (técnica de Little-Anti-Cheat)
+**Qué detecta:** el botón de disparo (`IN_ATTACK`) se mantiene presionado por **1 tick o menos** antes de soltarse.
 
-**Umbral:** salto ≥12 en tick de disparo (≥32 fuera de disparo, para tolerar jitter de spawn/carga), se necesitan ≥3 eventos.
+**Por qué funciona:** un clic físico real de mouse nunca dura solo un tick de servidor — incluso el clic más rápido humano se sostiene 2-3+ ticks. Un disparo generado programáticamente (sin un dedo real presionando el botón) puede pulsar el botón exactamente un tick.
 
-### Vía 4 — Aimlock (técnica de Lilac / Little-Anti-Cheat)
-**Qué detecta:** convergencia angular sostenida hacia un Infectado Especial a lo largo de varios ticks — sin necesidad de que llegue a disparar.
+**Umbral:** ≥3 eventos recientes (un solo caso puede ser un tap genuinamente rápido o un artefacto de red).
 
-**Por qué funciona:** mide cuánto ángulo le queda al jugador para apuntar exactamente al objetivo, tick a tick. Un humano cierra esa distancia de forma gradual y con ruido. Un script que "engancha" el objetivo colapsa el ángulo restante casi instantáneamente (a ≤10% del ángulo del tick anterior) mientras además produjo un salto grande (≥20°) para llegar ahí — algo que un humano cerrando esa distancia tan rápido no puede producir porque no le queda ángulo "sobrante" que colapsar. Debe sostenerse 7 ticks seguidos (~0.1s) para contar, evitando falsos positivos de un solo tick suelto.
+### Vía 4 — FOV Lock
+**Qué detecta:** la mira reacciona (salta) hacia un objetivo siempre al mismo "radio de entrada" angular, sin importar la dirección desde la que apareció el objetivo.
 
-**Umbral:** convergencia ≤10% del delta anterior + salto ≥20°, sostenido ≥7 ticks, se necesitan ≥2 eventos confirmados.
+**Por qué funciona:** muchos aimbots públicos (investigado directamente en el código fuente de un aimbot real de SourceMod) usan un cono de FOV circular fijo alrededor del crosshair — en cuanto un objetivo entra en ese radio, la mira se ajusta, sin importar si vino de arriba, abajo, izquierda o derecha. Un humano reacciona a distancias angulares muy variables según cuándo notó al objetivo; un radio de entrada con desviación estándar muy baja a través de muchos encuentros independientes es la firma de ese cono fijo.
+
+**Umbral:** ≥6 snaps confirmados con desviación estándar del radio de entrada <2.5°.
+
+### Vía 5 — No-Spread
+**Qué detecta:** a lo largo de muchos disparos individuales (no ráfagas) a distancia real, el error angular entre la vista y el punto de impacto se mantiene sospechosamente ajustado.
+
+**Por qué funciona:** reconstruir el RNG exacto del motor Source para predecir el spread disparo-por-disparo no es viable en SourcePawn puro, así que esto mide la huella estadística en su lugar. Toda arma hitscan tiene dispersión/inexactitud real que crece con movimiento y disparo sostenido; un cheat de no-spread (investigado en el código fuente real de un cheat público) cancela esa dispersión antes de que el disparo salga del cliente, así que el impacto cae casi exactamente sobre la línea apuntada casi siempre — la dispersión que debería haber simplemente no está.
+
+**Umbral:** ≥10 disparos individuales (con al menos 0.3s entre cada uno) a ≥300 unidades, ≥85% de ellos con error ≤1.2°.
+
+### Vías retiradas del score de Aim (siguen alimentando correlación)
+
+Estas 5 vías fueron el diseño original del módulo, pero por decisión del proyecto ya no contribuyen a `Aim_GetScore` — el módulo pasó a enfocarse exclusivamente en el patrón de disparo/bala. Siguen ejecutándose y reportando eventos al motor de correlación cruzada, por si coinciden en el tiempo con otro detector.
+
+- **Headshot Snap + Consistencia** — salto angular justo antes de un headshot, evaluado por consistencia entre disparos (desviación estándar del tamaño del salto).
+- **Angle Repeat** (técnica de StAC-tf2) — salto angular aislado flanqueado de quietud casi total, mientras se dispara.
+- **Cmdnum Spike** (técnica de StAC-tf2) — el `cmdnum` del cliente saltando varios valores de golpe en el tick de disparo.
+- **Aimlock** (técnica de Lilac / Little-Anti-Cheat) — convergencia angular sostenida hacia un objetivo a lo largo de varios ticks, sin necesidad de disparo.
+- **No-Recoil** — durante una ráfaga sostenida de disparo, el pitch de la vista se mantiene prácticamente plano (sin el salto vertical de retroceso esperado) en ≥85% de los ticks de una ráfaga de ≥18 ticks (~0.6s).
 
 ---
 
@@ -112,7 +133,55 @@ Se mide con coeficiente de variación de las medias de los buckets respecto al p
 
 ---
 
-## 2. Bhop (`anticheat_bhop.sp`) — peso 22%
+## 1e. Aim Drift (`anticheat_aimdrift.sp`) — se combina con Aim (máximo)
+
+(Técnica adaptada de [OSAntiCheat](https://github.com/Pintuzoft/OSAntiCheat), su detector `AimDriftDetector` en CS2.)
+
+A diferencia de todos los demás módulos de Aim, este no compara contra un umbral fijo ni contra el propio historial del jugador — compara al jugador contra **el resto del lobby, en vivo**, usando un test estadístico real (z-test de dos proporciones, el mismo tipo que se usa para preguntar "¿esta moneda es realmente más justa que aquella?" comparando dos muestras).
+
+### Cómo funciona
+
+Mientras la mira de un jugador está "enganchada" (dentro de 15° del Infectado Especial más cercano), cada tick es un **"paso"**: o bien redujo el error angular restante respecto al tick anterior, o no lo hizo. Se acumula, por jugador, cuántos pasos dio (`N`) y cuántos de ellos redujeron el error (`B`) — y en paralelo se acumula el mismo conteo agregado de **todos los demás jugadores del servidor combinados**, como línea base ("el resto del lobby").
+
+Con al menos 500 pasos propios del jugador y 3.000 pasos acumulados del resto del lobby, se calcula:
+
+```
+p1 = B_jugador / N_jugador          (tasa de éxito del sospechoso)
+p0 = B_resto / N_resto              (tasa de éxito del resto del lobby)
+z  = (p1 - p0) / error_estándar_combinado
+```
+
+Si `z ≥ 3.0` (justo por encima del techo de 2.79 medido en la implementación original contra un corpus honesto real), se marca como evidencia. El umbral no es un número fijo: al comparar contra el mismo servidor, mismo mapa, mismo momento, se cancelan automáticamente factores de confusión como la geometría del mapa o "esta horda en particular es fácil de rastrear" — la línea base viene exactamente de las mismas condiciones.
+
+**Umbral:** ≥500 pasos propios, ≥3.000 pasos del resto del lobby, z-score ≥3.0.
+
+**Alcance:** la línea base se reinicia en cada cambio de mapa (`OnMapStart`), porque mezclar muestras de mapas con geometría distinta sesgaría lo que cuenta como "normal". Con muy pocos jugadores conectados el detector se abstiene por completo hasta juntar suficiente muestra del resto del lobby — es intencional, evita comparar contra una línea base poco confiable.
+
+---
+
+## 1f. Tracking Kinematics (`anticheat_tracking.sp`) — se combina con Aim (máximo)
+
+(Fundamentado en investigación de control motor humano — teoría de trayectoria de jerk mínimo — y en cómo FACEIT describe públicamente su sistema Human Input Detection: juzgar *cómo* apunta un jugador, no solo umbrales fijos.)
+
+Ningún otro módulo mide la **forma** cinemática completa de una trayectoria de seguimiento sostenido — Aimlock mide una sola transición, Target Acquisition mide tiempo y monotonicidad de la sesión completa. Este módulo mide tres propiedades de la *forma* del recorrido angular, basadas en cómo se mueve realmente un brazo humano.
+
+### Cómo funciona
+
+Se abre una "sesión de tracking" (mismo concepto que Target Acquisition, pero un módulo independiente) mientras el jugador sigue al mismo Infectado Especial. Al cerrar la sesión (llegó a estar sobre el objetivo), se calculan tres métricas de forma:
+
+1. **Straightness (rectitud)** — distancia angular directa ÷ longitud real del trayecto recorrido. La mano humana divaga y se corrige; un script que converge por el camino más corto empuja este valor hacia 1.0.
+2. **Critical Points (puntos críticos)** — cuántas veces cambia de signo la velocidad de cierre del error durante la sesión. Un alcance humano real se descompone en un movimiento principal más 1-3 sub-correcciones (2-4 puntos críticos); un script que calcula una sola convergencia limpia produce exactamente 1.
+3. **Velocity Asymmetry (asimetría de velocidad)** — en qué punto de la sesión (como fracción del total de ticks) ocurrió el tick de cierre de error más rápido. Un alcance humano acelera rápido al inicio y desacelera de forma más gradual hacia el final (curva asimétrica, pico temprano); un seguimiento sintético tiende a converger de forma más simétrica (pico cerca de la mitad).
+
+**Importante — exige acuerdo entre métricas:** se requiere que **al menos 2 de las 3 métricas** caigan en la zona sospechosa al mismo tiempo antes de confiar en un score alto; si solo una lo hace, el score se reduce a la mitad. Cada métrica por separado tiene su propia tasa de falso positivo en la población legítima, pero que coincidan de forma independiente es una evidencia mucho más fuerte.
+
+**Umbral:** ≥6 sesiones cerradas y alcanzadas. Straightness promedio ≥0.92, o critical points promedio ≤1, o pico de velocidad entre el 42%-58% de la sesión (demasiado simétrico) — con al menos 2 de los 3 cumpliéndose a la vez para el score completo.
+
+**Rendimiento:** igual que Target Acquisition/Variance/Aim Drift, solo corre en nivel de vigilancia ≥1.
+
+---
+
+## 2. Bhop (`anticheat_bhop.sp`) — peso 21%
 
 Detecta bunny-hop automatizado (scripts que saltan en el tick exacto de aterrizaje para no perder velocidad), combinando **3 métricas**.
 
@@ -135,6 +204,20 @@ Un salto cuenta como "con air-strafe" cuando, durante su fase aérea: se mantuvo
 
 ### Métrica 3 — Honeypot de gravedad (técnica de StAC-tf2)
 En cuanto la racha llega a 8 saltos perfectos consecutivos, el plugin **multiplica silenciosamente la gravedad del jugador** por un valor aleatorio entre 6.1x y 7.9x, sin avisar. El timing de un bunny-hopper humano está calibrado para la gravedad normal — el cambio de física rompe ese "feel" y falla el salto de inmediato. Un script, en cambio, reacciona solo a la bandera `FL_ONGROUND` del motor, no al *feel* del salto, así que sigue acertando perfecto incluso con la gravedad alterada. Si sobrevive 3 saltos perfectos bajo gravedad honeypot, el score se fuerza a 100 — evidencia prácticamente irrefutable, físicamente casi imposible de producir por un humano. Si falla un salto mientras el honeypot está activo, se le devuelve la gravedad normal sin penalización (así se comportaría alguien legítimo).
+
+### Métrica 5 — Static Turn Rate (técnica de Oryx-AC)
+**Qué detecta:** durante el vuelo aéreo, el jugador gira la mira por exactamente el ángulo matemáticamente óptimo para maximizar la ganancia de velocidad (`asin(30/velocidad)`, derivado de la fórmula de aceleración aérea del motor Source), tick tras tick, de forma sostenida.
+
+**Por qué funciona:** un humano que persigue la velocidad máxima de bhop se *acerca* a ese óptimo por sensación, pero nunca lo clava turno tras turno — su delta real tiene ruido natural. Un script de air-strafe automático calcula el mismo ángulo óptimo cada tick y gira exactamente eso, así que su delta se queda "pegado" al óptimo con una tolerancia mínima (0.35°) de forma sostenida.
+
+**Umbral:** velocidad entre 100-2560 u/s, ≥10 ticks consecutivos dentro de tolerancia del óptimo.
+
+### Métrica 6 — Strafe-Key Sync / "BASH" (técnica de Oryx-AC)
+**Qué detecta:** cuántos ticks pasan entre que una tecla de strafe (A/D) cambia de estado y que la vista realmente gira en la dirección correspondiente.
+
+**Por qué funciona:** la mano de un humano tiene latencia real y variable entre presionar la tecla y que el giro del mouse la siga — nunca es el mismo tick exacto cada vez. Un script de silent-strafe/auto-sync gira la vista en el mismo tick exacto en que cambia el estado de la tecla, cada vez, porque ambos están controlados por el mismo código.
+
+**Umbral:** ≥18 transiciones de tecla judgeadas, ≥80% de ellas con sincronización perfecta (gap de 0 ticks).
 
 ---
 
@@ -171,7 +254,7 @@ Se evalúa sobre una racha de saltos encadenados. Si una racha de ≥6 saltos es
 
 ## 3. Integrity (`anticheat_integrity.sp`) — peso 11%
 
-Dos chequeos de **integridad del paquete de red**, no de comportamiento — verifican si el `usercmd` que mandó el cliente es siquiera físicamente posible de producir por un cliente legítimo. Casi cero falsos positivos por construcción, así que pesan fuerte en cuanto se disparan. El score del módulo es el máximo de los dos sub-chequeos.
+Cuatro chequeos de **integridad del paquete/estado**, no de comportamiento — verifican si lo que el cliente reporta es siquiera físicamente/estructuralmente posible de producir por un cliente legítimo. Casi cero falsos positivos por construcción, así que pesan fuerte en cuanto se disparan. El score del módulo es el máximo de los cuatro sub-chequeos.
 
 ### Fake Angles (técnica de StAC-tf2)
 **Qué detecta:** ángulo de pitch fuera de ±89° o de roll fuera de ±50°.
@@ -187,6 +270,20 @@ Dos chequeos de **integridad del paquete de red**, no de comportamiento — veri
 
 **Umbral:** ≥3 eventos.
 
+### Speedhack (técnica de SMAC)
+**Qué detecta:** el cliente enviando más comandos por segundo de los que el tiempo real de servidor permite — manipulación de timescale o inyección de comandos.
+
+**Por qué funciona:** un sistema de "crédito de ticks": el tiempo real transcurrido en el servidor recarga un balance de crédito a la tasa exacta del tickrate (más un pequeño margen de jitter), y cada `usercmd` procesado gasta un crédito. Un cliente legítimo nunca puede mandar más comandos de los que el tickrate permite — eso es literalmente lo que define el tickrate. Un cheat de timescale hace que el balance se agote de forma sostenida. Se exige además latencia estable entre chequeos, para no confundir un pico de ping (que legítimamente puede liberar una ráfaga de comandos acumulados) con manipulación real.
+
+**Umbral:** balance negativo durante ≥30 chequeos consecutivos (cada uno cada 0.1s) con latencia estable (variación ≤5ms).
+
+### Noclip
+**Qué detecta:** la posición del jugador cruza geometría sólida entre un tick y el siguiente.
+
+**Por qué funciona:** se traza un rayo en línea recta entre la posición del tick anterior y la actual contra `MASK_PLAYERSOLID`. La propia resolución de colisiones del motor nunca permite que un cliente legítimo produzca un trayecto que atraviese un sólido — si el rayo impacta algo en el medio, es estructuralmente imposible. Se excluye movimiento por encima de 900 u/s (empujones de Charger, lanzamientos de Hunter, etc., que producen saltos legítimos de posición grandes) para no confundir esos casos con noclip real.
+
+**Umbral:** 1 trayecto confirmado atravesando geometría sólida ya es evidencia (`STRONG_MODULE_THRESHOLD`-level por construcción).
+
 ---
 
 ## 4. NoLerp (`anticheat_nolerp.sp`) — peso 10%
@@ -199,7 +296,7 @@ Dos chequeos de **integridad del paquete de red**, no de comportamiento — veri
 
 ---
 
-## 5. OSAC (`anticheat_osac.sp`) — peso 15%
+## 5. OSAC (`anticheat_osac.sp`) — peso 14%
 
 Cinco detectores reimplementados de [OSAntiCheat](https://github.com/Pintuzoft/OSAntiCheat), un anti-cheat estadístico de CS2 cuyos umbrales fueron leídos de un archivo de 17.000 demos reales, no adivinados. Todos son de estilo **"logic breach"**: la población honesta *nunca* produce su firma, así que un patrón confirmado es casi certeza, no mera sospecha. Todos van filtrados (como el resto del sistema) a un superviviente disparando a un Infectado Especial. El score del módulo es el máximo de los cinco.
 
@@ -230,13 +327,27 @@ Cinco detectores reimplementados de [OSAntiCheat](https://github.com/Pintuzoft/O
 
 ---
 
-## Motor de correlación entre detectores (`anticheat_correlation.sp`)
+## 6. Macro (`anticheat_macro.sp`) — peso 4%
 
-Hasta ahora el sistema solo *sumaba* los scores de los 5 módulos con pesos fijos — un módulo mostrando sospecha leve y tres módulos independientes disparando en el mismo instante producían el mismo tipo de resultado, solo con distinta magnitud. El motor de correlación agrega una capa encima de eso, **sin tocar la lógica interna de ningún detector existente**.
+A diferencia de todos los demás módulos, este **no mira aim ni movimiento en absoluto**. Detecta macros/scripts genéricos automatizando cualquier tecla de acción del juego — curar, dar pastillas, empujar, recargar — sin que el jugador esté intentando hacer aimbot ni bhop.
 
 ### Cómo funciona
 
-Cada sub-detector (los 13 descritos arriba: 4 de Aim, 1 de Bhop, 2 de Bhop-2, 2 de Integrity, 1 de NoLerp, 5 de OSAC) reporta al motor de correlación el instante exacto en que registra un evento crudo — el mismo momento en que ya escribía en su propio historial interno, sin cambiar cuándo ni por qué dispara. Cada reporte lleva: qué detector fue, cuándo, y qué tan severo fue ese evento puntual (0-100).
+Rastrea la duración de pulsación (en ticks) de tres botones de acción sin relación con puntería: `IN_USE` (curar/interactuar), `IN_RELOAD`, `IN_ATTACK2` (empujón). Para cada botón, guarda un historial de las últimas 20 duraciones de pulsación y busca la duración más frecuente (la moda). Si una fracción muy alta de las pulsaciones recientes coincide casi exactamente con esa moda, es la firma de un macro: la mano humana varía cuánto sostiene una tecla de una pulsación a otra (reacción, intención, cansancio); un macro de teclado (AHK, script, mouse/teclado con macros) reproduce la misma duración exacta una y otra vez porque está temporizado por código, no por un impulso nervioso.
+
+**Umbral:** ≥12 pulsaciones calificadas (≥2 ticks de duración) por botón, ≥85% de ellas coincidiendo con la duración modal.
+
+**Por qué pesa menos que los demás:** a diferencia de los chequeos "logic breach" (estructuralmente imposibles), un agrupamiento de duración muy ajustado es una señal estadística real pero más suave — por eso Macro tiene un peso pequeño y deliberado (4%) en el Risk Score, contribuye pero nunca lo domina por sí solo.
+
+---
+
+## Motor de correlación entre detectores (`anticheat_correlation.sp`)
+
+Los scores de los módulos con peso propio solo se *sumaban* con pesos fijos — un módulo mostrando sospecha leve y tres módulos independientes disparando en el mismo instante producían el mismo tipo de resultado, solo con distinta magnitud. El motor de correlación agrega una capa encima de eso, **sin tocar la lógica interna de ningún detector existente**.
+
+### Cómo funciona
+
+**30 sub-detectores distintos** (todas las vías descritas en este documento, incluyendo las que ya no contribuyen directamente al score de su módulo padre) reportan al motor de correlación el instante exacto en que registran un evento crudo — el mismo momento en que ya escribían en su propio historial interno, sin cambiar cuándo ni por qué disparan. Cada reporte lleva: qué detector fue, cuándo, y qué tan severo fue ese evento puntual (0-100).
 
 El motor busca, dentro de una ventana de **1.5 segundos**, la mayor cantidad de **detectores distintos** que dispararon cerca uno del otro. Si solo un detector repite su propia señal varias veces, eso ya está reflejado en el score de ese módulo — no aporta nada nuevo. Pero si, por ejemplo, en el mismo segundo y medio se registran un evento de Angle Repeat, un TriggerBot y un BoneLock, eso es una cadena de evidencia que ningún módulo por separado puede ver: "el objetivo se volvió relevante → la mira saltó → adquisición perfecta → disparo casi instantáneo → impacto imposible", exactamente el patrón que un cheat real produce y que un jugador legítimo casi nunca replica en una ventana tan corta.
 
@@ -260,7 +371,7 @@ El Risk Score (0-100) sigue siendo un único número, pero mezclaba conceptos di
 
 - **RiskScore** — el mismo 0-100 de siempre (suma ponderada × multiplicador de correlación).
 - **Confidence** (0.0-1.0) — qué tan confiable es esta evaluación. Sube con la fuerza del peor módulo, con el multiplicador de correlación, y de forma extra si un módulo "logic breach" (Integrity, NoLerp, OSAC) disparó fuerte.
-- **Severity** (0-100) — el peor score individual de los 5 módulos, **sin** el multiplicador de correlación — mide qué tan grave es la peor pieza de evidencia por sí sola.
+- **Severity** (0-100) — el peor score individual de los módulos con peso propio (Aim, Bhop, Integrity, NoLerp, OSAC), **sin** el multiplicador de correlación — mide qué tan grave es la peor pieza de evidencia por sí sola.
 - **EvidenceCount** — cuántos detectores independientes contribuyeron (viene directo del motor de correlación; mínimo 1).
 
 ### Los cuatro niveles
@@ -284,60 +395,61 @@ El Risk Score (0-100) sigue siendo un único número, pero mezclaba conceptos di
 
 | Risk Score | Acción |
 |---|---|
-| ≥15 (`SCORE_THRESHOLD_NOTE`) | Aviso a admins en Discord + chat |
-| ≥35 (`SCORE_THRESHOLD_WARN`) | Advertencia visible en chat a todo el servidor |
-| ≥50 (`SCORE_THRESHOLD_BAN`) **y** algún módulo individual ≥60 (`STRONG_MODULE_THRESHOLD`) | Expulsión (kick) automática, tras 3 confirmaciones consecutivas (~30s sostenidos) |
+| ≥15 (`SCORE_THRESHOLD_NOTE`) | Solo se registra en el log del servidor (no hay chat ni Discord) |
+| ≥35 (`SCORE_THRESHOLD_WARN`) | Solo se registra en el log del servidor (no hay chat ni Discord) |
+| ≥50 (`SCORE_THRESHOLD_BAN`) **y** algún módulo individual ≥60 (`STRONG_MODULE_THRESHOLD`) | Expulsión (kick) automática, tras 1 confirmación (si la evidencia es de nivel VIOLATION) o 3 confirmaciones consecutivas (~20-30s sostenidos) en cualquier otro caso |
 
-Los admins con el flag `sm_ac_immunity` (o ADMFLAG_GENERIC) son inmunes a la expulsión automática, pero igual generan una nota en Discord para que quede registro.
+**Nota:** las notificaciones automáticas de "jugador sospechoso" (chat in-game y Discord) fueron removidas deliberadamente por decisión del proyecto — la única alerta visible ahora es justo antes del kick real, para no saturar el canal con avisos de comportamiento que todavía no cruzó el umbral de expulsión. Un admin puede seguir consultando el riesgo de cualquier jugador en cualquier momento con `sm_ac_view <jugador>` o el menú in-game.
+
+Los admins con el flag `sm_ac_immunity` (o ADMFLAG_GENERIC) son inmunes a la expulsión automática, pero igual generan una nota en el log para que quede registro.
 
 ---
 
 ## Créditos de técnicas externas
 
-Varias vías de detección están inspiradas o adaptadas de anti-cheats de código abierto de la comunidad SourceMod, investigados e integrados durante el desarrollo de este proyecto:
+Varias vías de detección están inspiradas o adaptadas de anti-cheats de código abierto de la comunidad, de investigación académica, o de la observación directa de cheats/aimbots reales, investigados e integrados durante el desarrollo de este proyecto:
 
-- **[StAC-tf2](https://github.com/sapphonie/StAC-tf2)** (Steph's Anti-Cheat, para TF2) — Angle Repeat, Cmdnum Spike, Fake Angles, Invalid Usercmd, honeypot de gravedad en bhop.
-- **[SMAC](https://github.com/srcdslab/sm-plugin-SMAC)** (SourceMod Anti-Cheat) — filtro de distancia mínima, decaimiento temporal de evidencia, forward `OnCheatDetected`, chequeo `IsClientInKickQueue`.
-- **[Lilac / Little-Anti-Cheat](https://github.com/J-Tanzanite/Little-Anti-Cheat)** — Aimlock (convergencia angular), NoLerp.
-- **[OSAntiCheat](https://github.com/Pintuzoft/OSAntiCheat)** (CS2, estadístico) — módulo OSAC completo: Bone-lock, Silent Aim (trayectoria), TriggerBot, KillBurst, SpinBot.
+- **[StAC-tf2](https://github.com/sapphonie/StAC-tf2)** (Steph's Anti-Cheat, para TF2) — Angle Repeat, Cmdnum Spike, Fake Angles, Invalid Usercmd, honeypot de gravedad en bhop, Psilent (snap-and-back de 1 tick).
+- **[SMAC](https://github.com/srcdslab/sm-plugin-SMAC)** (SourceMod Anti-Cheat) — filtro de distancia mínima, decaimiento temporal de evidencia, forward `OnCheatDetected`, chequeo `IsClientInKickQueue`, sistema de crédito de ticks para Speedhack.
+- **[Lilac / Little-Anti-Cheat](https://github.com/J-Tanzanite/Little-Anti-Cheat)** — Aimlock (convergencia angular), NoLerp, Autoshoot (duración de clic).
+- **[OSAntiCheat](https://github.com/Pintuzoft/OSAntiCheat)** (CS2, estadístico) — módulo OSAC completo: Bone-lock, Silent Aim (trayectoria), TriggerBot, KillBurst, SpinBot; además Aim Drift (z-test de dos proporciones contra la línea base del lobby en vivo).
 - **[AntiBhopCheat](https://github.com/srcdslab/sm-plugin-AntiBhopCheat)** — módulo Bhop-2: hyperscroll (presiones por tick) y heurística compuesta de salto scripted.
+- **[Oryx-AC](https://github.com/shavitush/Oryx-AC)** — Static Turn Rate (ángulo óptimo de air-strafe) y Strafe-Key Sync/BASH (correlación tecla-a-giro) en Bhop.
+- **[Franc1sco/aimbot](https://github.com/Franc1sco/aimbot)** (implementación de referencia de un aimbot real de SourceMod) — diseño de FOV Lock, inspirado directamente en cómo ese aimbot implementa su propio cono de FOV circular.
+- **[SimpleRealistic/styles-cheat-csgo-source](https://github.com/SimpleRealistic/styles-cheat-csgo-source)** (cheat real de CS:GO, módulo `NoSpread.cpp`) — diseño de No-Spread, inspirado en cómo ese cheat cancela el spread del motor antes del disparo.
+- **Investigación en control motor humano** (teoría de trayectoria de jerk mínimo, biometría de movimiento de mouse) y **FACEIT Human Input Detection** (metodología pública de juzgar comportamiento sobre umbrales fijos) — fundamento de Tracking Kinematics.
 
 Todas las implementaciones fueron reescritas desde cero para este proyecto, adaptadas específicamente a Left 4 Dead 2 (equipos, `m_zombieClass`, Infectados Especiales) y calibradas con datos reales de pruebas en este servidor.
 
 ---
 
-## Módulos y técnicas agregados en esta ronda de mejoras
+## Historial de mejoras
 
-Antes de esta ronda, el sistema ya contaba con el diseño base de Aim (Vía 1 — Headshot Snap + Consistencia) y Bhop (Métricas 1 y 2 — ratio de saltos perfectos y racha máxima). Las siguientes 6 técnicas se investigaron e integraron después, tras revisar anti-cheats de código abierto de la comunidad (StAC-tf2 y Lilac/Little-Anti-Cheat):
+El sistema creció por rondas sucesivas de investigación de anti-cheats de código abierto, papers académicos, y cheats reales. Resumen cronológico (de más antiguo a más reciente):
 
-1. **Cmdnum Spike** (Aim, Vía 3) — detecta el "disparo sin dispersión" cuando el cliente salta el contador de comandos en el tick de disparo. Técnica de StAC-tf2.
-2. **Fake Angles** (módulo Integrity nuevo) — detecta ángulos de vista fuera de los límites físicos que el propio cliente aplica. Técnica de StAC-tf2.
-3. **Invalid Usercmd** (módulo Integrity nuevo) — detecta comandos con campos negativos o bits de botones imposibles, señal de paquete manipulado a mano. Técnica de StAC-tf2.
-4. **Honeypot de gravedad** (Bhop, Métrica 3) — altera la gravedad del jugador tras una racha sospechosa de bhops perfectos; sobrevivirla es evidencia casi irrefutable. Técnica de StAC-tf2.
-5. **Aimlock** (Aim, Vía 4) — mide la convergencia angular sostenida hacia un objetivo, sin depender de que llegue a disparar. Técnica de Lilac / Little-Anti-Cheat.
-6. **NoLerp** (módulo nuevo completo) — consulta la interpolación configurada del cliente contra el mínimo físicamente posible. Técnica de Lilac / Little-Anti-Cheat.
+1. **Diseño base** — Aim (Headshot Snap + Consistencia) y Bhop (ratio de saltos perfectos, racha máxima).
+2. **Ronda StAC-tf2 / Lilac** — Cmdnum Spike, Fake Angles, Invalid Usercmd (módulo Integrity nuevo), honeypot de gravedad en Bhop, Aimlock, NoLerp (módulo nuevo).
+3. **Ronda OSAntiCheat / AntiBhopCheat** — módulo OSAC completo (Bone-lock, Silent Aim, TriggerBot, KillBurst, SpinBot), módulo Bhop-2 (hyperscroll + heurística compuesta).
+4. **Métrica 4 de Bhop** — cadena de bhop perfecto sin air-strafing real.
+5. **Remoción de WallHack** — el módulo de WallHack fue removido completamente del proyecto por decisión explícita; el sistema no detecta visión a través de geometría.
+6. **Reenfoque de Aim a "solo balas"** — por pedido explícito del proyecto, el score de Aim se limitó a patrones sobre el disparo/la bala en sí. Se agregaron Headshot Ratio, Psilent, Autoshoot, FOV Lock. Las vías originales (Snap, Angle Repeat, Cmdnum Spike, Aimlock, No-Recoil) pasaron a alimentar solo el motor de correlación.
+7. **Ronda "balas agresivas"** — investigación en GitHub de StAC-tf2 y Little-Anti-Cheat: No-Recoil (retroceso suprimido), y refuerzo del alcance de Psilent/Autoshoot ya mencionados arriba.
+8. **Ronda Oryx-AC / cheats reales** — Static Turn Rate y Strafe-Key Sync en Bhop (Oryx-AC); No-Spread en Aim, inspirado en un cheat real de CS:GO.
+9. **Ronda "categorías nuevas"** — Speedhack y Noclip (módulo Integrity, técnica de SMAC y trazado de colisión estándar), y el módulo Macro completamente nuevo (detección genérica de teclas con timing de script, sin relación con aim/movimiento).
+10. **Ronda anti-cheats famosos** — Aim Drift (z-test de dos proporciones contra la línea base del lobby en vivo, técnica de OSAntiCheat/CS2) y el módulo Tracking Kinematics completo (straightness, critical points, velocity asymmetry — fundamentado en investigación de control motor humano y en cómo FACEIT describe su Human Input Detection).
 
-### Segunda ronda — OSAntiCheat + AntiBhopCheat
-
-Tras revisar dos anti-cheats más (OSAntiCheat, un sistema estadístico de CS2, y AntiBhopCheat), se agregaron:
-
-7. **Módulo OSAC completo** (`anticheat_osac.sp`) — 5 detectores de estilo "logic breach" reimplementados de OSAntiCheat: **Bone-lock** (impacto ≤0.05° del centro de la cabeza), **Silent Aim por trayectoria** (daño con la mira a ≥10° de la víctima), **TriggerBot** (disparo <90ms tras cruzar el objetivo), **KillBurst** (≥4 headshots letales a Especiales en 15s), **SpinBot** (giro yaw ≥1000°/s sostenido).
-8. **Módulo Bhop-2** (`anticheat_bhop2.sp`) — segundo detector de bhop independiente, algoritmo de AntiBhopCheat: **hyperscroll** (≥0.85 presiones de `+jump` por tick) y **heurística compuesta** (gap ≤1 tick + pocas presiones + velocidad ≥285). Se combina con el módulo Bhop tomando el máximo.
-
-Con esto, el sistema quedó en **5 módulos con 16 técnicas combinadas** (Aim ×4, Bhop ×3, Bhop-2 ×2, Integrity ×2, NoLerp ×1, OSAC ×5), más el módulo Bhop-2 que corrobora a Bhop sin peso propio.
-
-Después se agregó la Métrica 4 de Bhop (cadena perfecta sin air-strafing) y las 5 vías del módulo OSAC quedaron distribuidas — total actual: **17 técnicas**.
+**Total actual: 6 módulos con peso propio (Aim, Bhop, Integrity, NoLerp, OSAC, Macro) + 7 módulos que se combinan por máximo con alguno de los anteriores (Target Acquisition, Variance×2, Shot Decision, Aim Drift, Tracking, Bhop-2) = 30 sub-detectores individuales reportando al motor de correlación.**
 
 ---
 
 ## Rendimiento — detección escalonada por nivel de vigilancia
 
-Para que un jugador limpio no pague el costo de los chequeos pesados, el sistema usa **niveles de vigilancia (0-3)** por jugador. Los chequeos baratos siempre corren cada tick; los caros (los que necesitan buscar el Infectado Especial más cercano cada tick: **Aimlock** y **TriggerBot**) solo se activan cuando el jugador ya generó evidencia con los baratos.
+Para que un jugador limpio no pague el costo de los chequeos pesados, el sistema usa **niveles de vigilancia (0-3)** por jugador. Los chequeos baratos siempre corren cada tick; los caros (los que necesitan buscar el Infectado Especial más cercano cada tick: **Aimlock**, **TriggerBot**, **Target Acquisition**, **Variance (aim)**, **Aim Drift** y **Tracking**) solo se activan cuando el jugador ya generó evidencia con los baratos.
 
 | Nivel | Se alcanza con | Qué corre |
 |---|---|---|
-| **0 — normal** (todos empiezan aquí) | — | Solo chequeos baratos: Angle Repeat, Cmdnum Spike, Headshot Snap, Integrity, Bhop, Bhop-2, SpinBot, Bone-lock, Silent Aim, KillBurst. **Cero búsquedas de objetivo por tick.** |
-| **1 — observado** | Risk ≥15 o cualquier módulo ≥15 | + Aimlock y TriggerBot, muestreados 1 de cada 4 ticks |
+| **0 — normal** (todos empiezan aquí) | — | Solo chequeos baratos: Angle Repeat, Cmdnum Spike, Headshot Snap, No-Recoil, Psilent, Autoshoot, Headshot Ratio, No-Spread, Integrity (incluye Speedhack, Noclip), Macro, Bhop (incluye Static Turn Rate, Strafe-Key Sync), Bhop-2, SpinBot, Bone-lock, Silent Aim, KillBurst. **Cero búsquedas de objetivo por tick.** |
+| **1 — observado** | Risk ≥15 o cualquier módulo ≥15 | + Aimlock, FOV Lock y TriggerBot, muestreados 1 de cada 4 ticks; + Target Acquisition, Variance (aim), Aim Drift, Tracking, cada tick sin throttle |
 | **2 — sospechoso** | Risk ≥30 o algún módulo ≥40 | Aimlock y TriggerBot 1 de cada 2 ticks |
 | **3 — alta sospecha** | Risk ≥50 o algún módulo ≥60 | Aimlock y TriggerBot cada tick + evaluación de riesgo cada 5s en vez de 10s (llega antes al umbral de kick) |
 
