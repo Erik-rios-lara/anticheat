@@ -1,0 +1,404 @@
+<title>Setup del Anti-Cheat</title>
+<style>
+:root {
+  --bg: #f7f6f3;
+  --surface: #ffffff;
+  --surface-2: #eeece6;
+  --border: #ddd9d0;
+  --text: #24221d;
+  --text-dim: #6b675e;
+  --accent: #2f6f4f;
+  --accent-dim: #e4efe8;
+  --code-bg: #1e2320;
+  --code-text: #d9e6dd;
+  --code-comment: #7d9488;
+  --warn-bg: #fbf0e2;
+  --warn-border: #e3c08c;
+  --warn-text: #6b4a1a;
+  --mono: "JetBrains Mono", ui-monospace, "SF Mono", Consolas, monospace;
+  --sans: "Inter", -apple-system, "Segoe UI", sans-serif;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #17181a;
+    --surface: #1f2124;
+    --surface-2: #26282b;
+    --border: #35373a;
+    --text: #e9e8e4;
+    --text-dim: #a2a099;
+    --accent: #5fbf8c;
+    --accent-dim: #1e2c25;
+    --code-bg: #111413;
+    --code-text: #cfe3d7;
+    --code-comment: #6d8578;
+    --warn-bg: #2b2416;
+    --warn-border: #6b5527;
+    --warn-text: #e3c08c;
+  }
+}
+
+:root[data-theme="dark"] {
+  --bg: #17181a;
+  --surface: #1f2124;
+  --surface-2: #26282b;
+  --border: #35373a;
+  --text: #e9e8e4;
+  --text-dim: #a2a099;
+  --accent: #5fbf8c;
+  --accent-dim: #1e2c25;
+  --code-bg: #111413;
+  --code-text: #cfe3d7;
+  --code-comment: #6d8578;
+  --warn-bg: #2b2416;
+  --warn-border: #6b5527;
+  --warn-text: #e3c08c;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--sans);
+  margin: 0;
+  padding: 0 20px;
+  padding-block: 48px 80px;
+}
+
+.wrap {
+  max-width: 760px;
+  margin: 0 auto;
+}
+
+header.masthead {
+  margin-bottom: 40px;
+}
+
+.eyebrow {
+  font-family: var(--mono);
+  font-size: 12px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--accent);
+  margin: 0 0 10px;
+}
+
+h1 {
+  font-size: clamp(28px, 4.5vw, 38px);
+  line-height: 1.15;
+  margin: 0 0 12px;
+  text-wrap: balance;
+  letter-spacing: -0.01em;
+}
+
+.dek {
+  color: var(--text-dim);
+  font-size: 16px;
+  line-height: 1.6;
+  max-width: 60ch;
+  margin: 0;
+}
+
+.repo-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 18px;
+  padding: 7px 12px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  font-family: var(--mono);
+  font-size: 13px;
+  color: var(--text);
+}
+.repo-chip svg { flex: none; opacity: 0.7; }
+
+.toc {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  list-style: none;
+  padding: 0;
+  margin: 28px 0 0;
+}
+.toc a {
+  font-family: var(--mono);
+  font-size: 12.5px;
+  color: var(--text-dim);
+  text-decoration: none;
+  padding: 5px 10px;
+  border: 1px solid var(--border);
+  border-radius: 100px;
+  transition: border-color 0.15s, color 0.15s;
+}
+.toc a:hover, .toc a:focus-visible { border-color: var(--accent); color: var(--accent); }
+
+.step {
+  display: flex;
+  gap: 20px;
+  padding-block: 32px;
+  border-top: 1px solid var(--border);
+  scroll-margin-top: 20px;
+}
+.step:first-of-type { border-top: none; padding-top: 8px; }
+
+.step-num {
+  flex: none;
+  width: 34px;
+  height: 34px;
+  border-radius: 9px;
+  background: var(--accent-dim);
+  color: var(--accent);
+  font-family: var(--mono);
+  font-weight: 600;
+  font-size: 15px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-variant-numeric: tabular-nums;
+}
+
+.step-body { min-width: 0; flex: 1; }
+
+.step h2 {
+  font-size: 19px;
+  margin: 3px 0 6px;
+  letter-spacing: -0.005em;
+}
+
+.step p {
+  color: var(--text-dim);
+  font-size: 15px;
+  line-height: 1.65;
+  margin: 0 0 14px;
+  max-width: 62ch;
+}
+.step p:last-child { margin-bottom: 0; }
+.step p code { margin: 0 1px; }
+
+code {
+  font-family: var(--mono);
+  font-size: 0.9em;
+  background: var(--surface-2);
+  padding: 0.12em 0.4em;
+  border-radius: 4px;
+  color: var(--text);
+}
+
+pre {
+  background: var(--code-bg);
+  color: var(--code-text);
+  border-radius: 9px;
+  padding: 14px 16px;
+  overflow-x: auto;
+  font-family: var(--mono);
+  font-size: 13px;
+  line-height: 1.65;
+  margin: 0 0 14px;
+  border: 1px solid rgba(255,255,255,0.06);
+}
+pre code { background: none; padding: 0; color: inherit; font-size: 1em; }
+.cmt { color: var(--code-comment); }
+
+.callout {
+  background: var(--warn-bg);
+  border: 1px solid var(--warn-border);
+  color: var(--warn-text);
+  border-radius: 9px;
+  padding: 12px 14px;
+  font-size: 13.5px;
+  line-height: 1.55;
+  margin: 0 0 14px;
+}
+.callout strong { font-weight: 600; }
+
+.filepath {
+  display: inline-block;
+  font-family: var(--mono);
+  font-size: 12.5px;
+  color: var(--text-dim);
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  padding: 2px 8px;
+  margin-bottom: 10px;
+}
+
+.checklist {
+  list-style: none;
+  padding: 0;
+  margin: 0 0 14px;
+  display: grid;
+  gap: 8px;
+}
+.checklist li {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+  font-size: 14.5px;
+  color: var(--text);
+  line-height: 1.5;
+}
+.checklist li::before {
+  content: "";
+  flex: none;
+  width: 15px;
+  height: 15px;
+  margin-top: 2px;
+  border-radius: 4px;
+  border: 1.5px solid var(--accent);
+  background: var(--accent-dim);
+}
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 14px;
+  margin: 0 0 14px;
+}
+th, td {
+  text-align: left;
+  padding: 7px 10px;
+  border-bottom: 1px solid var(--border);
+}
+th { color: var(--text-dim); font-weight: 500; font-size: 12.5px; text-transform: uppercase; letter-spacing: 0.03em; }
+td code { font-size: 12.5px; }
+
+.tbl-wrap { overflow-x: auto; margin-bottom: 14px; }
+.tbl-wrap table { margin-bottom: 0; }
+
+footer {
+  margin-top: 48px;
+  padding-top: 24px;
+  border-top: 1px solid var(--border);
+  color: var(--text-dim);
+  font-size: 13px;
+  line-height: 1.6;
+}
+footer code { font-size: 0.95em; }
+
+@media (max-width: 520px) {
+  .step { gap: 14px; }
+  .step-num { width: 28px; height: 28px; font-size: 13px; }
+}
+</style>
+
+<div class="wrap">
+
+<header class="masthead">
+  <p class="eyebrow">L4D2 Anti-Cheat &middot; onboarding de desarrollo</p>
+  <h1>Poner el anti-cheat a correr en otra PC</h1>
+  <p class="dek">Guía para clonar el plugin, compilarlo con SourceMod, y subirlo al mismo servidor que ya estamos usando. Pensada para alguien que va a tocar el código, no solo jugar.</p>
+  <span class="repo-chip">
+    <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8Z"/></svg>
+    github.com/Erik-rios-lara/anticheat
+  </span>
+  <ul class="toc">
+    <li><a href="#paso-1">1. Requisitos</a></li>
+    <li><a href="#paso-2">2. Clonar</a></li>
+    <li><a href="#paso-3">3. Compilar</a></li>
+    <li><a href="#paso-4">4. Subir al servidor</a></li>
+    <li><a href="#paso-5">5. Verificar</a></li>
+    <li><a href="#paso-6">6. Flujo diario</a></li>
+  </ul>
+</header>
+
+<main>
+
+  <section class="step" id="paso-1">
+    <span class="step-num">1</span>
+    <div class="step-body">
+      <h2>Instalar los requisitos</h2>
+      <p>Dos cosas hacen falta antes de tocar código: Git para bajar el repositorio, y el compilador de SourcePawn (<code>spcomp</code>) para convertir el <code>.sp</code> en el <code>.smx</code> que SourceMod realmente ejecuta. El compilador ya viene incluido dentro del propio repo, así que no hay que instalar SourceMod completo en esta PC — solo Git.</p>
+      <ul class="checklist">
+        <li><strong>Git</strong> — <a href="https://git-scm.com/downloads" style="color:inherit">git-scm.com/downloads</a>, instalación por defecto sirve.</li>
+        <li><strong>Un editor de texto/código</strong> — VS Code recomendado, con la extensión <code>SourcePawn</code> del marketplace para resaltado de sintaxis.</li>
+      </ul>
+      <div class="callout"><strong>No hace falta</strong> instalar un servidor de L4D2 local ni SourceMod completo en esta PC — el servidor real ya está corriendo donde siempre, solo vamos a compilar aquí y subir el archivo resultante ahí.</div>
+    </div>
+  </section>
+
+  <section class="step" id="paso-2">
+    <span class="step-num">2</span>
+    <div class="step-body">
+      <h2>Clonar el repositorio</h2>
+      <p>El repo es público, así que no necesitas que te invite como colaborador para clonarlo y compilar en tu máquina. Abre una terminal donde quieras guardar el proyecto y corre:</p>
+      <pre><code><span class="cmt"># Windows (PowerShell o Git Bash), en la carpeta donde quieras el proyecto</span>
+git clone https://github.com/Erik-rios-lara/anticheat.git
+cd anticheat</code></pre>
+      <p>Esto trae los 20+ archivos <code>.sp</code> del anti-cheat (aim, bhop, integrity, correlation, evidence, etc.), el compilador <code>spcomp.exe</code>, y el bot de Discord en <code>discord-bot/</code>.</p>
+    </div>
+  </section>
+
+  <section class="step" id="paso-3">
+    <span class="step-num">3</span>
+    <div class="step-body">
+      <h2>Compilar el plugin</h2>
+      <p>El archivo principal es <code>anticheat_core.sp</code> — incluye a todos los demás módulos vía <code>#include</code>, así que compilarlo a él genera el <code>.smx</code> completo.</p>
+      <span class="filepath">dentro de la carpeta anticheat/</span>
+      <pre><code><span class="cmt"># Git Bash</span>
+./addons/sourcemod/scripting/spcomp.exe anticheat_core.sp -o anticheat_core.smx
+
+<span class="cmt"># PowerShell</span>
+.\addons\sourcemod\scripting\spcomp.exe anticheat_core.sp -o anticheat_core.smx</code></pre>
+      <p>Una compilación sana termina así — un warning es normal y ya existía antes, no es un error tuyo:</p>
+      <pre><code>Code size:         157040 bytes
+<span class="cmt">anticheat_core.sp(32) : warning 204: symbol is assigned a value that is never used: "g_cvBanDuration"</span>
+1 Warning.</code></pre>
+      <div class="callout"><strong>Si ves "Error"</strong> en vez de solo warnings, el <code>.smx</code> no se generó — no lo subas al servidor. Pega el error completo en el chat del equipo antes de continuar.</div>
+    </div>
+  </section>
+
+  <section class="step" id="paso-4">
+    <span class="step-num">4</span>
+    <div class="step-body">
+      <h2>Subir el .smx al servidor compartido</h2>
+      <p>Como vamos a usar el mismo servidor de L4D2 que ya tenemos, este paso es copiar el archivo compilado a la carpeta de plugins de ese servidor — reemplazando el que ya está ahí.</p>
+      <div class="tbl-wrap">
+        <table>
+          <tr><th>Archivo</th><th>Destino en el servidor</th></tr>
+          <tr><td><code>anticheat_core.smx</code></td><td><code>addons/sourcemod/plugins/</code></td></tr>
+        </table>
+      </div>
+      <p>Cómo llega el archivo hasta ahí depende de cómo esté hosteado el servidor — pídeme el acceso (SFTP, panel del host, o carpeta compartida si corre en una PC) y te doy los datos de conexión exactos por un canal privado, no aquí.</p>
+      <div class="callout"><strong>Coordina conmigo antes de subir</strong> — si dos compilamos y subimos al mismo tiempo, uno pisa el cambio del otro sin que se note hasta que algo se comporta raro en partida.</div>
+    </div>
+  </section>
+
+  <section class="step" id="paso-5">
+    <span class="step-num">5</span>
+    <div class="step-body">
+      <h2>Recargar el plugin sin reiniciar el servidor</h2>
+      <p>Con el <code>.smx</code> nuevo ya en su carpeta, en la consola del servidor (o vía RCON):</p>
+      <pre><code>sm plugins reload anticheat_core</code></pre>
+      <p>Confirma que tomó el cambio:</p>
+      <pre><code>sm plugins list</code></pre>
+      <p>Debe aparecer <code>anticheat_core</code> como <code>Running</code>. Si el servidor está vacío, reiniciar el mapa (<code>changelevel</code> al mapa actual) también sirve, pero normalmente no hace falta.</p>
+    </div>
+  </section>
+
+  <section class="step" id="paso-6">
+    <span class="step-num">6</span>
+    <div class="step-body">
+      <h2>Flujo de trabajo día a día</h2>
+      <p>Para que los cambios de ambos no se pisen, la rutina normal es:</p>
+      <ul class="checklist">
+        <li>Antes de editar: <code>git pull</code> para traer lo último que el otro subió.</li>
+        <li>Edita el/los archivo(s) <code>.sp</code> que correspondan al módulo que estás tocando.</li>
+        <li>Compila local (paso 3) y revisa que no salgan errores nuevos.</li>
+        <li><code>git add</code>, <code>git commit -m "..."</code>, <code>git push</code> — así el otro ve tu cambio en el historial.</li>
+        <li>Solo entonces sube el <code>.smx</code> compilado al servidor y recarga (pasos 4-5).</li>
+      </ul>
+      <p>El <code>.smx</code> compilado nunca se sube a GitHub (está en <code>.gitignore</code>) — cada quien compila su propia copia desde el mismo código fuente, así el repo se queda solo con lo que de verdad importa versionar: el <code>.sp</code>.</p>
+    </div>
+  </section>
+
+</main>
+
+<footer>
+  Módulos activos ahora mismo: aim (headshot ratio, psilent, autoshoot, fov lock), bhop, bhop2, integrity, nolerp, osac, correlation, evidence, target acquisition, variance profiling, shot decision — más el bot de Discord para alertas de kick. Cualquier duda de un módulo específico, pregunta en el chat antes de tocarlo a ciegas.
+</footer>
+
+</div>
