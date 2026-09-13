@@ -29,6 +29,7 @@
 float g_AngleYaw[MAXPLAYERS+1][ANGLE_HISTORY];
 float g_AnglePitch[MAXPLAYERS+1][ANGLE_HISTORY];
 float g_AngleTime[MAXPLAYERS+1][ANGLE_HISTORY];
+bool  g_AngleFiring[MAXPLAYERS+1][ANGLE_HISTORY]; // IN_ATTACK state that tick - shares this ring's index/head
 int   g_AngleHead[MAXPLAYERS+1];
 int   g_AngleCount[MAXPLAYERS+1];
 
@@ -134,6 +135,120 @@ float g_AimlockEventTime[MAXPLAYERS+1][AIMLOCK_EVENT_HISTORY];
 int   g_AimlockEventHead[MAXPLAYERS+1];
 int   g_AimlockEventCount[MAXPLAYERS+1];
 
+// ------------------------------------------------------------------
+// "No-Recoil" path: firing any weapon kicks the view pitch upward tick by
+// tick (recoil/punchangle) - even a player fighting the kick with the
+// mouse leaves a jagged, imperfect trace because human correction is
+// reactive (it lags a frame or two behind each kick, and overshoots or
+// undershoots by varying amounts). A no-recoil cheat cancels the kick
+// before it ever reaches the view angle the server sees, so the pitch
+// stays essentially flat - within measurement noise - tick after tick
+// for the entire length of a sustained burst. That flatness sustained for
+// many consecutive firing ticks is not something a human's imperfect
+// counter-correction reproduces; a real player's trace always has some
+// ticks where the correction over- or under-shoots by more than the
+// noise floor below.
+//
+// Gating on a long unbroken IN_ATTACK burst (not just "any 2 shots") is
+// what keeps this from flagging semi-auto/low-recoil weapons (pistol,
+// hunting rifle) - those rarely produce a burst this long in the first
+// place, so they mostly never reach the point where this check judges
+// anything.
+#define NORECOIL_FLAT_DEG        0.15  // pitch delta below this counts as "did not rise" this tick
+#define NORECOIL_MIN_BURST_TICKS 18    // ~0.6s of unbroken fire before judging flatness at all
+#define NORECOIL_MIN_FLAT_RATIO  0.85  // this fraction of the judged burst must be flat
+#define NORECOIL_EVENT_HISTORY 16
+int   g_NoRecoilBurstTicks[MAXPLAYERS+1];   // consecutive IN_ATTACK ticks in the current burst
+int   g_NoRecoilFlatTicks[MAXPLAYERS+1];    // of those, how many had a near-zero pitch delta
+float g_NoRecoilPrevPitch[MAXPLAYERS+1];
+bool  g_NoRecoilHasPrevPitch[MAXPLAYERS+1];
+float g_NoRecoilEventTime[MAXPLAYERS+1][NORECOIL_EVENT_HISTORY];
+int   g_NoRecoilEventHead[MAXPLAYERS+1];
+int   g_NoRecoilEventCount[MAXPLAYERS+1];
+
+// ------------------------------------------------------------------
+// "Headshot Ratio" path: of all the shots a player lands on a Special
+// Infected (body or head), what fraction are headshots? A human's ratio
+// varies shot to shot - recoil, movement, panic - even a very good player
+// mixes in body/limb hits over a long enough sample. A ratio pinned near
+// 100% sustained across many landed shots is the signature of an aimbot
+// silently correcting every shot to the head regardless of where the
+// player's crosshair actually was (this is the OTHER half of that same
+// cheat behavior - anticheat_osac.sp's SilentAim already catches the
+// "aim visibly off-target yet the hit lands" side of it independently).
+//
+// Ring buffer stores just a bit per landed shot: was it a headshot.
+#define HSRATIO_MIN_SHOTS   8      // need a real sample before judging a ratio at all
+#define HSRATIO_SUSPECT     0.95   // sustained ratio at/above this is suspicious
+#define HSRATIO_HISTORY 32
+bool  g_HSRatioIsHead[MAXPLAYERS+1][HSRATIO_HISTORY];
+float g_HSRatioTime[MAXPLAYERS+1][HSRATIO_HISTORY];
+int   g_HSRatioHead[MAXPLAYERS+1];
+int   g_HSRatioCount[MAXPLAYERS+1];
+float g_HSRatioLastEventTime[MAXPLAYERS+1];
+
+// ------------------------------------------------------------------
+// "Psilent" path (technique credited to StAC-tf2, the strongest single
+// detector in that project): a silent-aim cheat that snaps the view to
+// the target for exactly the one tick it needs the server to register
+// the hit, then snaps it straight back to where the player's mouse
+// actually was - so the crosshair the player SEES never visibly moves.
+// The tell is in the three-tick shape: angle[oldest] and angle[newest]
+// match almost exactly, while angle[middle] jumped far away from both.
+// A human's hand cannot produce that "there and immediately back to the
+// exact same spot" shape - any real correction leaves the aim somewhere
+// new, not restores it byte-for-byte.
+#define PSILENT_RETURN_EPS_DEG   0.1   // frame A and frame C must match within this to count as "snapped back"
+#define PSILENT_MIN_JUMP_DEG     5.0   // frame B must have moved at least this far from both neighbors
+#define PSILENT_EVENT_HISTORY 16
+float g_PsilentEventTime[MAXPLAYERS+1][PSILENT_EVENT_HISTORY];
+int   g_PsilentEventHead[MAXPLAYERS+1];
+int   g_PsilentEventCount[MAXPLAYERS+1];
+
+// ------------------------------------------------------------------
+// "FOV Lock" path: many public aimbots (e.g. the reference implementation
+// at github.com/Franc1sco/aimbot) select and snap onto whichever target
+// enters a fixed angular radius around the crosshair - a circular "FOV"
+// cone measured with a dot product against the view direction, checked
+// every tick regardless of which direction the target is approaching
+// from. The server can't see that cone directly, but it CAN see its
+// fingerprint: every time the aim reacts with a real snap toward the
+// nearest target, record how far off-target the aim was the instant
+// before it reacted (the "entry radius"). A human's snap reacts at
+// wildly different distances shot to shot - however close the target
+// happened to be when they noticed it, mid-swing, out of the corner of
+// their eye, already tracking loosely - so that distribution is wide. A
+// fixed-FOV cheat reacts at (almost) the same entry radius every time,
+// regardless of the direction the target came from, because that radius
+// IS the cheat's configured trigger boundary. Low spread across many
+// independent snaps, not any single snap's size, is what's damning here.
+#define FOVLOCK_SNAP_MIN_DEG      8.0   // minimum aim-error jump to count as "the aim reacted"
+#define FOVLOCK_ENTRY_MAX_DEG    60.0   // entry radii beyond this are too wide to be a tight cheat FOV - ignore as noise
+#define FOVLOCK_MIN_SAMPLES       6     // need several independent snaps to judge a spread at all
+#define FOVLOCK_MAX_STDDEV_DEG    2.5   // spread this tight across many samples is the tell
+#define FOVLOCK_HISTORY 24
+float g_FovLockEntryDeg[MAXPLAYERS+1][FOVLOCK_HISTORY]; // angle-to-target the instant before each confirmed snap
+float g_FovLockEntryTime[MAXPLAYERS+1][FOVLOCK_HISTORY];
+int   g_FovLockHead[MAXPLAYERS+1];
+int   g_FovLockCount[MAXPLAYERS+1];
+float g_FovLockLastEventTime[MAXPLAYERS+1];
+
+// ------------------------------------------------------------------
+// "Autoshoot" path (technique credited to Little-Anti-Cheat): a real
+// mouse click physically depresses the button for more than a single
+// server tick - even the fastest human click registers as IN_ATTACK held
+// across at least 2-3 consecutive ticks at typical tickrates. A cheat
+// that fires a shot programmatically (rather than through an actual
+// button press) can pulse IN_ATTACK for exactly one tick and release it,
+// which no human clicking a physical mouse button reproduces.
+#define AUTOSHOOT_MAX_HOLD_TICKS  1    // held for this many ticks or fewer = suspicious
+#define AUTOSHOOT_EVENT_HISTORY 16
+float g_AutoshootEventTime[MAXPLAYERS+1][AUTOSHOOT_EVENT_HISTORY];
+int   g_AutoshootEventHead[MAXPLAYERS+1];
+int   g_AutoshootEventCount[MAXPLAYERS+1];
+bool  g_AutoshootPrevFiring[MAXPLAYERS+1];
+int   g_AutoshootHoldTicks[MAXPLAYERS+1];
+
 void Aim_Init(int client)
 {
     g_AngleHead[client] = 0;
@@ -149,6 +264,23 @@ void Aim_Init(int client)
     g_AimlockEventHead[client] = 0;
     g_AimlockEventCount[client] = 0;
     g_AimlockPrevDeltaDeg[client] = -1.0;
+    g_NoRecoilBurstTicks[client] = 0;
+    g_NoRecoilFlatTicks[client] = 0;
+    g_NoRecoilHasPrevPitch[client] = false;
+    g_NoRecoilEventHead[client] = 0;
+    g_NoRecoilEventCount[client] = 0;
+    g_HSRatioHead[client] = 0;
+    g_HSRatioCount[client] = 0;
+    g_HSRatioLastEventTime[client] = 0.0;
+    g_PsilentEventHead[client] = 0;
+    g_PsilentEventCount[client] = 0;
+    g_AutoshootEventHead[client] = 0;
+    g_AutoshootEventCount[client] = 0;
+    g_AutoshootPrevFiring[client] = false;
+    g_AutoshootHoldTicks[client] = 0;
+    g_FovLockHead[client] = 0;
+    g_FovLockCount[client] = 0;
+    g_FovLockLastEventTime[client] = 0.0;
 }
 
 // ------------------------------------------------------------------
@@ -161,11 +293,15 @@ void Aim_RecordAngleCheap(int client, const float angles[3], int buttons, int cm
     g_AngleYaw[client][idx]   = angles[0];
     g_AnglePitch[client][idx] = angles[1];
     g_AngleTime[client][idx]  = GetGameTime();
+    g_AngleFiring[client][idx] = (buttons & IN_ATTACK) != 0;
     g_AngleHead[client] = (idx + 1) % ANGLE_HISTORY;
     if (g_AngleCount[client] < ANGLE_HISTORY) g_AngleCount[client]++;
 
     if (buttons & IN_ATTACK) Aim_CheckAngleRepeat(client);
     Aim_CheckCmdnumSpike(client, cmdnum, (buttons & IN_ATTACK) != 0);
+    Aim_CheckNoRecoil(client, (buttons & IN_ATTACK) != 0);
+    Aim_CheckPsilent(client);
+    Aim_CheckAutoshoot(client, (buttons & IN_ATTACK) != 0);
 }
 
 // ------------------------------------------------------------------
@@ -266,6 +402,130 @@ static void Aim_CheckAngleRepeat(int client)
 }
 
 // ------------------------------------------------------------------
+// "Psilent" check (see comment near PSILENT_* constants above). Looks at
+// 3 consecutive recorded ticks: the oldest (A), the middle (B), and the
+// newest (C). Flags when A and C match almost exactly while B jumped far
+// from both - the "snap to target, snap back to the same spot" shape a
+// psilent cheat leaves and a human's hand does not.
+static void Aim_CheckPsilent(int client)
+{
+    if (g_AngleCount[client] < 3) return;
+
+    int head = g_AngleHead[client];
+    int idxC = (head - 1 + ANGLE_HISTORY) % ANGLE_HISTORY; // newest
+    int idxB = (head - 2 + ANGLE_HISTORY) % ANGLE_HISTORY; // middle
+    int idxA = (head - 3 + ANGLE_HISTORY) % ANGLE_HISTORY; // oldest
+
+    float dYawAC = NormalizeAngleDiff(FAbs(g_AngleYaw[client][idxA] - g_AngleYaw[client][idxC]));
+    float dPitchAC = FAbs(g_AnglePitch[client][idxA] - g_AnglePitch[client][idxC]);
+    float returnDeg = SquareRoot(dYawAC*dYawAC + dPitchAC*dPitchAC);
+    if (returnDeg >= PSILENT_RETURN_EPS_DEG) return; // did not snap back to (almost) the same spot
+
+    float dYawAB = NormalizeAngleDiff(FAbs(g_AngleYaw[client][idxA] - g_AngleYaw[client][idxB]));
+    float dPitchAB = FAbs(g_AnglePitch[client][idxA] - g_AnglePitch[client][idxB]);
+    float jumpDeg = SquareRoot(dYawAB*dYawAB + dPitchAB*dPitchAB);
+    if (jumpDeg < PSILENT_MIN_JUMP_DEG) return; // no real jump in the middle frame, nothing to explain
+
+    // The middle frame must be the one that actually fired - otherwise
+    // this is just a normal flick-and-settle with no shot involved.
+    if (!g_AngleFiring[client][idxB]) return;
+
+    int idx = g_PsilentEventHead[client];
+    g_PsilentEventTime[client][idx] = GetGameTime();
+    g_PsilentEventHead[client] = (idx + 1) % PSILENT_EVENT_HISTORY;
+    if (g_PsilentEventCount[client] < PSILENT_EVENT_HISTORY) g_PsilentEventCount[client]++;
+
+    // Severity: how far the middle-frame jump was, on top of a fixed high
+    // base - a confirmed snap-and-return-to-the-exact-spot is strong
+    // evidence by construction, not something that scales gently.
+    Correlation_ReportEvent(client, CORR_DET_AIM_PSILENT, RoundFloat(60.0 + jumpDeg));
+}
+
+// ------------------------------------------------------------------
+// "Autoshoot" check (see comment near AUTOSHOOT_* constants above). Walks
+// IN_ATTACK's rising/falling edge every tick; if it drops again after
+// AUTOSHOOT_MAX_HOLD_TICKS or fewer ticks held, the click was too short
+// for a human finger on a physical button.
+static void Aim_CheckAutoshoot(int client, bool firing)
+{
+    if (firing)
+    {
+        g_AutoshootHoldTicks[client]++;
+        g_AutoshootPrevFiring[client] = true;
+        return;
+    }
+
+    if (!g_AutoshootPrevFiring[client]) return; // wasn't firing last tick either - nothing just ended
+
+    int heldTicks = g_AutoshootHoldTicks[client];
+    g_AutoshootHoldTicks[client] = 0;
+    g_AutoshootPrevFiring[client] = false;
+
+    if (heldTicks < 1 || heldTicks > AUTOSHOOT_MAX_HOLD_TICKS) return;
+
+    int idx = g_AutoshootEventHead[client];
+    g_AutoshootEventTime[client][idx] = GetGameTime();
+    g_AutoshootEventHead[client] = (idx + 1) % AUTOSHOOT_EVENT_HISTORY;
+    if (g_AutoshootEventCount[client] < AUTOSHOOT_EVENT_HISTORY) g_AutoshootEventCount[client]++;
+
+    Correlation_ReportEvent(client, CORR_DET_AIM_AUTOSHOOT, 55);
+}
+
+// ------------------------------------------------------------------
+// "No-Recoil" check (see comment near NORECOIL_* constants above). Tracks
+// how many consecutive IN_ATTACK ticks pass with essentially zero pitch
+// movement once the burst is long enough to judge, and flags a burst that
+// stayed flat almost the entire time.
+static void Aim_CheckNoRecoil(int client, bool firing)
+{
+    if (!firing)
+    {
+        g_NoRecoilBurstTicks[client] = 0;
+        g_NoRecoilFlatTicks[client] = 0;
+        g_NoRecoilHasPrevPitch[client] = false;
+        return;
+    }
+
+    float eyeAngles[3];
+    GetClientEyeAngles(client, eyeAngles);
+    float pitch = eyeAngles[0]; // GetClientEyeAngles: [0]=pitch, [1]=yaw, unambiguous regardless of this file's own angle-buffer convention
+
+    if (!g_NoRecoilHasPrevPitch[client])
+    {
+        g_NoRecoilPrevPitch[client] = pitch;
+        g_NoRecoilHasPrevPitch[client] = true;
+        g_NoRecoilBurstTicks[client] = 1;
+        g_NoRecoilFlatTicks[client] = 0;
+        return;
+    }
+
+    float dPitch = FAbs(pitch - g_NoRecoilPrevPitch[client]);
+    g_NoRecoilPrevPitch[client] = pitch;
+    g_NoRecoilBurstTicks[client]++;
+    if (dPitch < NORECOIL_FLAT_DEG) g_NoRecoilFlatTicks[client]++;
+
+    if (g_NoRecoilBurstTicks[client] < NORECOIL_MIN_BURST_TICKS) return;
+
+    float flatRatio = float(g_NoRecoilFlatTicks[client]) / float(g_NoRecoilBurstTicks[client]);
+    if (flatRatio < NORECOIL_MIN_FLAT_RATIO) return;
+
+    int idx = g_NoRecoilEventHead[client];
+    g_NoRecoilEventTime[client][idx] = GetGameTime();
+    g_NoRecoilEventHead[client] = (idx + 1) % NORECOIL_EVENT_HISTORY;
+    if (g_NoRecoilEventCount[client] < NORECOIL_EVENT_HISTORY) g_NoRecoilEventCount[client]++;
+
+    // Severity: how far past the flat-ratio floor this burst was, plus a
+    // bonus for a longer sustained burst (harder to fake by luck).
+    int severity = RoundFloat(40.0 + (flatRatio - NORECOIL_MIN_FLAT_RATIO) * 200.0 + float(g_NoRecoilBurstTicks[client] - NORECOIL_MIN_BURST_TICKS));
+    Correlation_ReportEvent(client, CORR_DET_AIM_NORECOIL, severity);
+
+    // One confirmed flat burst = one event; keep judging the rest of this
+    // same burst fresh instead of re-firing every tick while it continues.
+    g_NoRecoilBurstTicks[client] = 0;
+    g_NoRecoilFlatTicks[client] = 0;
+}
+
+// ------------------------------------------------------------------
 // Angle (in degrees) between the client's current view direction and the
 // straight line to a target's eye position - i.e. how far off-target the
 // crosshair currently is. Returns -1.0 if there is no valid nearest
@@ -328,6 +588,58 @@ void Aim_RunTriggerCheck(int client)
 }
 
 // ------------------------------------------------------------------
+// "FOV Lock" check (see comment near FOVLOCK_* constants above). Records
+// the angle-to-target the instant before a real snap toward it, then
+// judges whether that "entry radius" is suspiciously consistent across
+// many independent snaps - the signature of a fixed circular aimbot FOV
+// rather than a human noticing targets at wildly varying distances.
+static void Aim_CheckFovLock(int client, float prevDeg, float deltaDeg)
+{
+    float snapSize = prevDeg - deltaDeg; // how much closer to on-target this tick landed
+    if (snapSize < FOVLOCK_SNAP_MIN_DEG) return;          // not a real snap, just normal tracking noise
+    if (prevDeg > FOVLOCK_ENTRY_MAX_DEG) return;           // target was already too far out to be a tight cheat FOV
+
+    int idx = g_FovLockHead[client];
+    g_FovLockEntryDeg[client][idx] = prevDeg;
+    g_FovLockEntryTime[client][idx] = GetGameTime();
+    g_FovLockHead[client] = (idx + 1) % FOVLOCK_HISTORY;
+    if (g_FovLockCount[client] < FOVLOCK_HISTORY) g_FovLockCount[client]++;
+
+    int total = g_FovLockCount[client];
+    if (total < FOVLOCK_MIN_SAMPLES) return;
+
+    float now = GetGameTime();
+    float sum = 0.0;
+    int count = 0;
+    for (int i = 0; i < total; i++)
+    {
+        if (now - g_FovLockEntryTime[client][i] > EVENT_EXPIRE_SECONDS) continue;
+        sum += g_FovLockEntryDeg[client][i];
+        count++;
+    }
+    if (count < FOVLOCK_MIN_SAMPLES) return;
+    float avg = sum / float(count);
+
+    float varSum = 0.0;
+    for (int i = 0; i < total; i++)
+    {
+        if (now - g_FovLockEntryTime[client][i] > EVENT_EXPIRE_SECONDS) continue;
+        float d = g_FovLockEntryDeg[client][i] - avg;
+        varSum += d * d;
+    }
+    float stddev = SquareRoot(varSum / float(count));
+    if (stddev >= FOVLOCK_MAX_STDDEV_DEG) return; // entry radius varies too much - looks human
+
+    if (now - g_FovLockLastEventTime[client] < 3.0) return; // don't re-fire every single qualifying snap
+    g_FovLockLastEventTime[client] = now;
+
+    // Severity: tighter spread and a longer confirmed sample are both
+    // stronger evidence of a fixed trigger radius.
+    int severity = RoundFloat(45.0 + (FOVLOCK_MAX_STDDEV_DEG - stddev) * 15.0 + float(count - FOVLOCK_MIN_SAMPLES) * 2.0);
+    Correlation_ReportEvent(client, CORR_DET_AIM_FOVLOCK, severity);
+}
+
+// ------------------------------------------------------------------
 // "Aimlock" check (see comment near AIMLOCK_* constants above). Compares
 // how much leftover angle-to-target remains this tick versus last tick.
 static void Aim_CheckAimlock(int client, const float angles[3])
@@ -346,6 +658,8 @@ static void Aim_CheckAimlock(int client, const float angles[3])
     g_AimlockPrevDeltaDeg[client] = deltaDeg;
 
     if (prevDeg < 0.0) return; // first sample since acquiring a target, nothing to compare yet
+
+    Aim_CheckFovLock(client, prevDeg, deltaDeg);
 
     bool converging = (prevDeg > 1.0) && (deltaDeg <= prevDeg * AIMLOCK_CONVERGE_RATIO);
     bool bigJump = FAbs(prevDeg - deltaDeg) >= AIMLOCK_MIN_JUMP_DEG;
@@ -386,13 +700,49 @@ static bool IsSpecialInfected(int victim)
 static float FAbs(float v) { return v < 0.0 ? -v : v; }
 
 // ------------------------------------------------------------------
-// Called from Hook_TraceAttack. Only headshots on Special Infected reach
-// here (filtered by the caller isn't required, but we double check).
+// "Headshot Ratio" recorder - every shot landed on a Special Infected
+// (any hitgroup), not just headshots, so the ratio has a real denominator.
+static void Aim_RecordHeadshotRatioSample(int attacker, bool isHead)
+{
+    int idx = g_HSRatioHead[attacker];
+    g_HSRatioIsHead[attacker][idx] = isHead;
+    g_HSRatioTime[attacker][idx] = GetGameTime();
+    g_HSRatioHead[attacker] = (idx + 1) % HSRATIO_HISTORY;
+    if (g_HSRatioCount[attacker] < HSRATIO_HISTORY) g_HSRatioCount[attacker]++;
+
+    // Report to correlation once there's enough sample to judge, at most
+    // once every few seconds (a burst of headshots landing in the same
+    // instant shouldn't count as many independent correlation events).
+    int total = g_HSRatioCount[attacker];
+    if (total < HSRATIO_MIN_SHOTS) return;
+
+    float now = GetGameTime();
+    int heads = 0;
+    for (int i = 0; i < total; i++)
+    {
+        if (g_HSRatioIsHead[attacker][i]) heads++;
+    }
+    float ratio = float(heads) / float(total);
+    if (ratio < HSRATIO_SUSPECT) return;
+    if (now - g_HSRatioLastEventTime[attacker] < 3.0) return;
+
+    g_HSRatioLastEventTime[attacker] = now;
+    int severity = RoundFloat(40.0 + (ratio - HSRATIO_SUSPECT) * 1000.0 + float(total - HSRATIO_MIN_SHOTS));
+    Correlation_ReportEvent(attacker, CORR_DET_AIM_HSRATIO, severity);
+}
+
+// ------------------------------------------------------------------
+// Called from Hook_TraceAttack for every shot that lands on a Special
+// Infected (any hitgroup) - feeds the Headshot Ratio path. The snap/flick
+// logic below only ever acted on headshots, kept as-is for that subset.
 void Aim_RecordShot(int attacker, int victim, int hitgroup)
 {
-    if (hitgroup != HITGROUP_HEAD) return;
     if (!IsSpecialInfected(victim)) return;
     if (attacker < 1 || attacker > MaxClients || !IsClientInGame(attacker)) return;
+
+    Aim_RecordHeadshotRatioSample(attacker, hitgroup == HITGROUP_HEAD);
+
+    if (hitgroup != HITGROUP_HEAD) return;
 
     // Close-quarters shots produce legitimately sharp corrections - skip them.
     float posAttacker[3], posVictim[3];
@@ -429,119 +779,138 @@ void Aim_RecordShot(int attacker, int victim, int hitgroup)
     Correlation_ReportEvent(attacker, CORR_DET_AIM_SNAP, RoundFloat(40.0 + snapDeg * 3.0));
 }
 
-static float FMin(float a, float b) { return a < b ? a : b; }
-static float FMax(float a, float b) { return a > b ? a : b; }
+// Note: Snap+Consistency, Angle Repeat, Cmdnum Spike, Aimlock and
+// No-Recoil above still run and still report to Correlation_ReportEvent
+// for cross-detector correlation value, but (per project decision) no
+// longer compute their own contribution to this module's aimbot score -
+// Headshot Ratio below is the only thing Aim_GetScore consults now.
+#define NORECOIL_MIN_EVENTS 2
 
-// Path 1: snap immediately before a headshot on a Special Infected,
-// judged for sustained statistical consistency across several shots.
-static int Aim_GetHeadshotScore(int client)
+// "Headshot Ratio" - sustained near-100% headshot rate against
+// Special Infected across a real sample of landed shots (see
+// Aim_RecordHeadshotRatioSample comment above). This is the module's ONLY
+// contribution to Aim_GetScore - the other paths above (Snap, Angle
+// Repeat, Cmdnum Spike, Aimlock, No-Recoil) still run and still feed the
+// Correlation engine for their own cross-detector value, but no longer
+// count toward this module's own aimbot score. The complementary pattern
+// - crosshair visibly off-target yet the shot still lands - is
+// anticheat_osac.sp's SilentAim, a separate module already scored on its
+// own and combined into totalRisk independently.
+static int Aim_GetHeadshotRatioScore(int client)
 {
-    int total = g_EventCount[client];
-    if (total < EVENT_MIN_SAMPLES) return 0;
+    int total = g_HSRatioCount[client];
+    if (total < HSRATIO_MIN_SHOTS) return 0;
 
-    // Only count events that haven't expired - a player who cheated once
-    // and has since played clean for a while shouldn't stay flagged forever.
+    float now = GetGameTime();
+    int heads = 0;
+    int counted = 0;
+    for (int i = 0; i < total; i++)
+    {
+        if (now - g_HSRatioTime[client][i] > EVENT_EXPIRE_SECONDS) continue;
+        counted++;
+        if (g_HSRatioIsHead[client][i]) heads++;
+    }
+    if (counted < HSRATIO_MIN_SHOTS) return 0;
+
+    float ratio = float(heads) / float(counted);
+    if (ratio < HSRATIO_SUSPECT) return 0;
+
+    float score = 40.0 + (ratio - HSRATIO_SUSPECT) * 1000.0 + float(counted - HSRATIO_MIN_SHOTS) * 2.0;
+    if (score > 100.0) score = 100.0;
+    return RoundFloat(score);
+}
+
+static float FMax(float a, float b) { return a > b ? a : b; }
+static float FMin(float a, float b) { return a < b ? a : b; }
+
+// "Psilent" - 1-tick snap-to-target-and-back on a firing tick (see
+// Aim_CheckPsilent comment above). Each confirmed occurrence is already
+// near-certain by construction (a human cannot restore the exact prior
+// angle after a real correction), so even a single recent event scores
+// meaningfully; repeats push it to the cap fast.
+#define PSILENT_MIN_EVENTS 1
+static int Aim_GetPsilentScore(int client)
+{
+    int total = g_PsilentEventCount[client];
+    if (total < PSILENT_MIN_EVENTS) return 0;
+
+    float now = GetGameTime();
+    int count = 0;
+    for (int i = 0; i < total; i++)
+    {
+        if (now - g_PsilentEventTime[client][i] <= EVENT_EXPIRE_SECONDS) count++;
+    }
+    if (count < PSILENT_MIN_EVENTS) return 0;
+
+    float score = FMin(60.0 + float(count - PSILENT_MIN_EVENTS) * 20.0, 100.0);
+    return RoundFloat(score);
+}
+
+// "Autoshoot" - IN_ATTACK held for fewer ticks than a physical click can
+// produce (see Aim_CheckAutoshoot comment above). A single occurrence can
+// be a genuinely fast tap or a network artifact, so this path needs a
+// repeated pattern before it counts as evidence.
+#define AUTOSHOOT_MIN_EVENTS 3
+static int Aim_GetAutoshootScore(int client)
+{
+    int total = g_AutoshootEventCount[client];
+    if (total < AUTOSHOOT_MIN_EVENTS) return 0;
+
+    float now = GetGameTime();
+    int count = 0;
+    for (int i = 0; i < total; i++)
+    {
+        if (now - g_AutoshootEventTime[client][i] <= EVENT_EXPIRE_SECONDS) count++;
+    }
+    if (count < AUTOSHOOT_MIN_EVENTS) return 0;
+
+    float score = FMin(float(count - AUTOSHOOT_MIN_EVENTS) * 12.0 + 45.0, 100.0);
+    return RoundFloat(score);
+}
+
+// "FOV Lock" - the aim reacts (snaps) at a suspiciously consistent entry
+// radius across many independent encounters, regardless of the target's
+// approach direction (see Aim_CheckFovLock comment above). Correlation_
+// ReportEvent already gates this on a tight stddev before ever firing, so
+// a single confirmed report is already a judged pattern, not a raw
+// sample - unlike the other paths, one event here is meaningful evidence.
+#define FOVLOCK_MIN_EVENTS 1
+static int Aim_GetFovLockScore(int client)
+{
+    int total = g_FovLockCount[client];
+    if (total < FOVLOCK_MIN_SAMPLES) return 0;
+
     float now = GetGameTime();
     float sum = 0.0;
     int count = 0;
     for (int i = 0; i < total; i++)
     {
-        if (now - g_EventTime[client][i] > EVENT_EXPIRE_SECONDS) continue;
-        sum += g_EventSnapDeg[client][i];
+        if (now - g_FovLockEntryTime[client][i] > EVENT_EXPIRE_SECONDS) continue;
+        sum += g_FovLockEntryDeg[client][i];
         count++;
     }
-    if (count < EVENT_MIN_SAMPLES) return 0;
+    if (count < FOVLOCK_MIN_SAMPLES) return 0;
     float avg = sum / float(count);
 
     float varSum = 0.0;
     for (int i = 0; i < total; i++)
     {
-        if (now - g_EventTime[client][i] > EVENT_EXPIRE_SECONDS) continue;
-        float d = g_EventSnapDeg[client][i] - avg;
+        if (now - g_FovLockEntryTime[client][i] > EVENT_EXPIRE_SECONDS) continue;
+        float d = g_FovLockEntryDeg[client][i] - avg;
         varSum += d * d;
     }
     float stddev = SquareRoot(varSum / float(count));
+    if (stddev >= FOVLOCK_MAX_STDDEV_DEG) return 0;
 
-    // A human occasionally snap-flicks onto a headshot in a panic, but the
-    // size of that flick varies wildly shot to shot. A script that
-    // auto-snaps to the head produces a tight, repeatable jump size
-    // instead - same target distance, same correction, over and over.
-    float score = 0.0;
-    score += FMin(float(count - EVENT_MIN_SAMPLES) * 8.0, 50.0);
-    if (stddev < CONSISTENCY_MAX_STDDEV_DEG)
-    {
-        score += FMin((CONSISTENCY_MAX_STDDEV_DEG - stddev) * 12.0, 50.0);
-    }
-
+    float score = 45.0 + (FOVLOCK_MAX_STDDEV_DEG - stddev) * 15.0 + float(count - FOVLOCK_MIN_SAMPLES) * 2.0;
     if (score > 100.0) score = 100.0;
-    return RoundFloat(score);
-}
-
-// Path 2: "Angle Repeat" - isolated snaps while firing, independent of
-// hitgroup/target (see Aim_CheckAngleRepeat comment above). Sustained
-// repetition of this exact shape is what separates a script from a human
-// panic-flick, which is a one-off, not a pattern.
-static int Aim_GetAngleRepeatScore(int client)
-{
-    int total = g_RepeatEventCount[client];
-    if (total < REPEAT_MIN_SAMPLES) return 0;
-
-    float now = GetGameTime();
-    int count = 0;
-    for (int i = 0; i < total; i++)
-    {
-        if (now - g_RepeatEventTime[client][i] <= EVENT_EXPIRE_SECONDS) count++;
-    }
-    if (count < REPEAT_MIN_SAMPLES) return 0;
-
-    float score = FMin(float(count - REPEAT_MIN_SAMPLES) * 10.0, 100.0);
-    return RoundFloat(score);
-}
-
-// Path 3: "Cmdnum Spike" - command_number jumps far ahead on a firing
-// tick, the signature of a no-spread/perfect-shot cheat. Independent of
-// view angles entirely, so it catches cheats that never touch the mouse.
-static int Aim_GetCmdSpikeScore(int client)
-{
-    int total = g_CmdSpikeEventCount[client];
-    if (total < CMDSPIKE_MIN_SAMPLES) return 0;
-
-    float now = GetGameTime();
-    int count = 0;
-    for (int i = 0; i < total; i++)
-    {
-        if (now - g_CmdSpikeEventTime[client][i] <= EVENT_EXPIRE_SECONDS) count++;
-    }
-    if (count < CMDSPIKE_MIN_SAMPLES) return 0;
-
-    float score = FMin(float(count - CMDSPIKE_MIN_SAMPLES) * 15.0 + 40.0, 100.0);
-    return RoundFloat(score);
-}
-
-// Path 4: "Aimlock" - sustained angle convergence onto a Special Infected,
-// independent of whether a shot ever landed. Catches lock-on/silent-aim
-// cheats that track a target smoothly rather than snapping onto it once.
-static int Aim_GetAimlockScore(int client)
-{
-    int total = g_AimlockEventCount[client];
-    if (total < AIMLOCK_MIN_SAMPLES) return 0;
-
-    float now = GetGameTime();
-    int count = 0;
-    for (int i = 0; i < total; i++)
-    {
-        if (now - g_AimlockEventTime[client][i] <= EVENT_EXPIRE_SECONDS) count++;
-    }
-    if (count < AIMLOCK_MIN_SAMPLES) return 0;
-
-    float score = FMin(float(count - AIMLOCK_MIN_SAMPLES) * 20.0 + 50.0, 100.0);
     return RoundFloat(score);
 }
 
 int Aim_GetScore(int client)
 {
-    float best = FMax(float(Aim_GetHeadshotScore(client)), float(Aim_GetAngleRepeatScore(client)));
-    best = FMax(best, float(Aim_GetCmdSpikeScore(client)));
-    best = FMax(best, float(Aim_GetAimlockScore(client)));
+    float best = FMax(float(Aim_GetHeadshotRatioScore(client)), float(Aim_GetPsilentScore(client)));
+    best = FMax(best, float(Aim_GetAutoshootScore(client)));
+    best = FMax(best, float(Aim_GetFovLockScore(client)));
     return RoundFloat(best);
 }

@@ -49,6 +49,11 @@ enum CorrelationDetector
     CORR_DET_AIM_REPEAT,         // Angle Repeat (anticheat_aim.sp)
     CORR_DET_AIM_CMDSPIKE,       // Cmdnum Spike (anticheat_aim.sp)
     CORR_DET_AIM_AIMLOCK,        // Aimlock (anticheat_aim.sp)
+    CORR_DET_AIM_NORECOIL,       // No-Recoil / suppressed vertical punch (anticheat_aim.sp)
+    CORR_DET_AIM_HSRATIO,        // Headshot Ratio - near-100% headshots sustained (anticheat_aim.sp)
+    CORR_DET_AIM_PSILENT,        // Psilent - 1-tick snap-to-target then snap-back (anticheat_aim.sp)
+    CORR_DET_AIM_AUTOSHOOT,      // Autoshoot - shot fired without IN_ATTACK held long enough (anticheat_aim.sp)
+    CORR_DET_AIM_FOVLOCK,        // FOV Lock - snap reacts at a fixed entry radius regardless of direction (anticheat_aim.sp)
     CORR_DET_BHOP_RATIO,         // Perfect-jump ratio / streak / honeypot / no-strafe (anticheat_bhop.sp)
     CORR_DET_BHOP2,              // Hyperscroll / hack-composite (anticheat_bhop2.sp)
     CORR_DET_INTEGRITY,          // Fake Angles / Invalid Usercmd (anticheat_integrity.sp)
@@ -83,7 +88,7 @@ int   g_Corr_EventCount[MAXPLAYERS+1];
 
 // Human-readable names for logging (index-aligned with CorrelationDetector).
 static char g_Corr_DetectorNames[CORR_DET_COUNT][24] = {
-    "AimSnap", "AngleRepeat", "CmdnumSpike", "Aimlock",
+    "AimSnap", "AngleRepeat", "CmdnumSpike", "Aimlock", "NoRecoil", "HeadshotRatio", "Psilent", "Autoshoot", "FovLock",
     "BhopRatio", "Bhop2", "Integrity", "NoLerp",
     "BoneLock", "SilentAim", "TriggerBot", "KillBurst", "SpinBot",
     "TargetAcq", "AimVariance", "BhopVariance", "ShotDecision"

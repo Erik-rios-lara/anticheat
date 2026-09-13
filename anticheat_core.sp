@@ -569,7 +569,6 @@ public Action Timer_Score(Handle timer, any client)
         {
             g_HighRiskStreak[client] = 0;
             AC_Log("[ACTION] %N risk %d ignored for auto-kick: insufficient independent evidence.", client, totalRisk);
-            Discord_SendRiskAlert(client, aimScore, bhopScore, integrityScore, noLerpScore, osacScore, totalRisk, "WARN");
             g_LastScoreTime[client] = now;
             return Plugin_Continue;
         }
@@ -589,7 +588,6 @@ public Action Timer_Score(Handle timer, any client)
             char evLevelName[16];
             Evidence_LevelName(evidence.Level, evLevelName, sizeof(evLevelName));
             AC_Log("[ACTION] %N high risk %d; confirmation %d/%d (%s)", client, totalRisk, g_HighRiskStreak[client], confirmationsNeeded, evLevelName);
-            Discord_SendRiskAlert(client, aimScore, bhopScore, integrityScore, noLerpScore, osacScore, totalRisk, "WARN");
             g_LastScoreTime[client] = now;
             return Plugin_Continue;
         }
@@ -597,7 +595,6 @@ public Action Timer_Score(Handle timer, any client)
         if (isImmune)
         {
             AC_Log("[IMMUNITY] Admin %N bypassed auto-kick (risk %d).", client, totalRisk);
-            Discord_SendRiskAlert(client, aimScore, bhopScore, integrityScore, noLerpScore, osacScore, totalRisk, "NOTE");
         }
         else
         {
@@ -639,15 +636,13 @@ public Action Timer_Score(Handle timer, any client)
         }
         else
         {
-            AC_NotifyAdmins("[AntiCheat] %N muestra comportamiento MUY sospechoso (%d).", client, totalRisk);
-            Discord_SendRiskAlert(client, aimScore, bhopScore, integrityScore, noLerpScore, osacScore, totalRisk, "WARN");
+            AC_Log("[ACTION] %N muestra comportamiento MUY sospechoso (%d).", client, totalRisk);
         }
     }
     else if (totalRisk >= SCORE_THRESHOLD_NOTE)
     {
         g_HighRiskStreak[client] = 0;
-        AC_NotifyAdmins("[AntiCheat] %N muestra comportamiento sospechoso (%d).", client, totalRisk);
-        Discord_SendRiskAlert(client, aimScore, bhopScore, integrityScore, noLerpScore, osacScore, totalRisk, "NOTE");
+        AC_Log("[ACTION] %N muestra comportamiento sospechoso (%d).", client, totalRisk);
     }
     else
     {
