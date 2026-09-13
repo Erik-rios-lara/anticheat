@@ -188,6 +188,35 @@ int   g_HSRatioCount[MAXPLAYERS+1];
 float g_HSRatioLastEventTime[MAXPLAYERS+1];
 
 // ------------------------------------------------------------------
+// "No-Spread" path: reconstructing the engine's exact per-shot spread
+// from its RNG seed isn't feasible in pure SourcePawn (that RNG lives in
+// the engine binary, not exposed through any include), so this measures
+// the statistical fingerprint instead. Every hitscan weapon has real
+// spread/inaccuracy that grows with movement and sustained fire - shot
+// after shot at range, that spread scatters the actual impact point
+// around the crosshair's intended line by a real, non-zero amount, and a
+// human's own imperfect follow-up correction adds more scatter on top.
+// A no-spread cheat (see e.g. SimpleRealistic/styles-cheat-csgo-source's
+// NoSpread.cpp) cancels the engine's spread calculation before the shot
+// leaves the client, so the impact lands dead-on the aimed line almost
+// every time - the scatter that should be there just isn't. This tracks
+// the angular error between the view and the actual impact point across
+// many separate (non-burst) shots at real range and flags a sustained
+// run where that error stays implausibly tight.
+#define NOSPREAD_MIN_RANGE       300.0  // only judge shots with actual travel distance - spread barely matters up close
+#define NOSPREAD_MAX_ERR_DEG       1.2  // impact error below this is "suspiciously clean" for a real weapon's spread
+#define NOSPREAD_MIN_SHOTS          10  // separate shots needed before judging a run
+#define NOSPREAD_TIGHT_RATIO      0.85  // this fraction of the run landing dead-clean is the tell
+#define NOSPREAD_BURST_GAP_SEC     0.3  // shots closer together than this are spray continuation, not separate attempts
+#define NOSPREAD_HISTORY 24
+float g_NoSpreadErrDeg[MAXPLAYERS+1][NOSPREAD_HISTORY];
+float g_NoSpreadTime[MAXPLAYERS+1][NOSPREAD_HISTORY];
+int   g_NoSpreadHead[MAXPLAYERS+1];
+int   g_NoSpreadCount[MAXPLAYERS+1];
+float g_NoSpreadLastFireTime[MAXPLAYERS+1];
+float g_NoSpreadLastEventTime[MAXPLAYERS+1];
+
+// ------------------------------------------------------------------
 // "Psilent" path (technique credited to StAC-tf2, the strongest single
 // detector in that project): a silent-aim cheat that snaps the view to
 // the target for exactly the one tick it needs the server to register
@@ -281,6 +310,10 @@ void Aim_Init(int client)
     g_FovLockHead[client] = 0;
     g_FovLockCount[client] = 0;
     g_FovLockLastEventTime[client] = 0.0;
+    g_NoSpreadHead[client] = 0;
+    g_NoSpreadCount[client] = 0;
+    g_NoSpreadLastFireTime[client] = 0.0;
+    g_NoSpreadLastEventTime[client] = 0.0;
 }
 
 // ------------------------------------------------------------------
@@ -732,15 +765,74 @@ static void Aim_RecordHeadshotRatioSample(int attacker, bool isHead)
 }
 
 // ------------------------------------------------------------------
+// "No-Spread" recorder (see comment near NOSPREAD_* constants above).
+// Only judges the FIRST shot of a burst at real range - a spray's later
+// shots have their own separate accuracy-decay statistics and would
+// muddy a clean read on baseline spread.
+static void Aim_RecordNoSpreadSample(int attacker, int victim, const float attackerAngles[3])
+{
+    float now = GetGameTime();
+    bool firstOfBurst = (now - g_NoSpreadLastFireTime[attacker]) > NOSPREAD_BURST_GAP_SEC;
+    g_NoSpreadLastFireTime[attacker] = now;
+    if (!firstOfBurst) return;
+
+    float eyePos[3], victimPos[3];
+    GetClientEyePosition(attacker, eyePos);
+    GetClientAbsOrigin(victim, victimPos);
+    victimPos[2] += 32.0; // torso-ish reference point, same convention as OSAC
+
+    float range = GetVectorDistance(eyePos, victimPos);
+    if (range < NOSPREAD_MIN_RANGE) return;
+
+    float toTarget[3];
+    MakeVectorFromPoints(eyePos, victimPos, toTarget);
+    float wanted[3];
+    GetVectorAngles(toTarget, wanted);
+
+    float dYaw = NormalizeAngleDiff(FAbs(attackerAngles[1] - wanted[1]));
+    float dPitch = FAbs(attackerAngles[0] - wanted[0]);
+    float errDeg = SquareRoot(dYaw*dYaw + dPitch*dPitch);
+
+    int idx = g_NoSpreadHead[attacker];
+    g_NoSpreadErrDeg[attacker][idx] = errDeg;
+    g_NoSpreadTime[attacker][idx] = now;
+    g_NoSpreadHead[attacker] = (idx + 1) % NOSPREAD_HISTORY;
+    if (g_NoSpreadCount[attacker] < NOSPREAD_HISTORY) g_NoSpreadCount[attacker]++;
+
+    int total = g_NoSpreadCount[attacker];
+    if (total < NOSPREAD_MIN_SHOTS) return;
+
+    int tight = 0;
+    int counted = 0;
+    for (int i = 0; i < total; i++)
+    {
+        if (now - g_NoSpreadTime[attacker][i] > EVENT_EXPIRE_SECONDS) continue;
+        counted++;
+        if (g_NoSpreadErrDeg[attacker][i] <= NOSPREAD_MAX_ERR_DEG) tight++;
+    }
+    if (counted < NOSPREAD_MIN_SHOTS) return;
+
+    float tightRatio = float(tight) / float(counted);
+    if (tightRatio < NOSPREAD_TIGHT_RATIO) return;
+    if (now - g_NoSpreadLastEventTime[attacker] < 3.0) return;
+
+    g_NoSpreadLastEventTime[attacker] = now;
+    int severity = RoundFloat(45.0 + (tightRatio - NOSPREAD_TIGHT_RATIO) / (1.0 - NOSPREAD_TIGHT_RATIO) * 45.0 + float(counted - NOSPREAD_MIN_SHOTS));
+    Correlation_ReportEvent(attacker, CORR_DET_AIM_NOSPREAD, severity);
+}
+
+// ------------------------------------------------------------------
 // Called from Hook_TraceAttack for every shot that lands on a Special
-// Infected (any hitgroup) - feeds the Headshot Ratio path. The snap/flick
-// logic below only ever acted on headshots, kept as-is for that subset.
-void Aim_RecordShot(int attacker, int victim, int hitgroup)
+// Infected (any hitgroup) - feeds the Headshot Ratio and No-Spread paths.
+// The snap/flick logic below only ever acted on headshots, kept as-is
+// for that subset.
+void Aim_RecordShot(int attacker, int victim, int hitgroup, const float attackerAngles[3])
 {
     if (!IsSpecialInfected(victim)) return;
     if (attacker < 1 || attacker > MaxClients || !IsClientInGame(attacker)) return;
 
     Aim_RecordHeadshotRatioSample(attacker, hitgroup == HITGROUP_HEAD);
+    Aim_RecordNoSpreadSample(attacker, victim, attackerAngles);
 
     if (hitgroup != HITGROUP_HEAD) return;
 
@@ -907,10 +999,39 @@ static int Aim_GetFovLockScore(int client)
     return RoundFloat(score);
 }
 
+// "No-Spread" - impact error stays implausibly tight across many separate
+// shots at range (see Aim_RecordNoSpreadSample comment above). Correlation_
+// ReportEvent for this path is already gated on a tight ratio across a
+// real sample, so a confirmed recent report is judged evidence.
+static int Aim_GetNoSpreadScore(int client)
+{
+    int total = g_NoSpreadCount[client];
+    if (total < NOSPREAD_MIN_SHOTS) return 0;
+
+    float now = GetGameTime();
+    int tight = 0;
+    int counted = 0;
+    for (int i = 0; i < total; i++)
+    {
+        if (now - g_NoSpreadTime[client][i] > EVENT_EXPIRE_SECONDS) continue;
+        counted++;
+        if (g_NoSpreadErrDeg[client][i] <= NOSPREAD_MAX_ERR_DEG) tight++;
+    }
+    if (counted < NOSPREAD_MIN_SHOTS) return 0;
+
+    float tightRatio = float(tight) / float(counted);
+    if (tightRatio < NOSPREAD_TIGHT_RATIO) return 0;
+
+    float score = 45.0 + (tightRatio - NOSPREAD_TIGHT_RATIO) / (1.0 - NOSPREAD_TIGHT_RATIO) * 45.0 + float(counted - NOSPREAD_MIN_SHOTS);
+    if (score > 100.0) score = 100.0;
+    return RoundFloat(score);
+}
+
 int Aim_GetScore(int client)
 {
     float best = FMax(float(Aim_GetHeadshotRatioScore(client)), float(Aim_GetPsilentScore(client)));
     best = FMax(best, float(Aim_GetAutoshootScore(client)));
     best = FMax(best, float(Aim_GetFovLockScore(client)));
+    best = FMax(best, float(Aim_GetNoSpreadScore(client)));
     return RoundFloat(best);
 }

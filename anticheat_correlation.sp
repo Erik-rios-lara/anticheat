@@ -67,6 +67,9 @@ enum CorrelationDetector
     CORR_DET_AIMVARIANCE,        // Aim angular-velocity variance profile (anticheat_variance.sp)
     CORR_DET_BHOPVARIANCE,       // Bhop jump-timing variance profile (anticheat_variance.sp)
     CORR_DET_SHOTDECISION,       // Shot Decision Analysis (anticheat_shotdecision.sp)
+    CORR_DET_BHOP_TURNRATE,      // Static optimized-angle air-strafe (anticheat_bhop.sp)
+    CORR_DET_BHOP_SYNC,          // Strafe-key-to-yaw tick correlation / "BASH" (anticheat_bhop.sp)
+    CORR_DET_AIM_NOSPREAD,       // No-Spread - impact ignores the seed-derived weapon spread (anticheat_aim.sp)
     CORR_DET_COUNT               // sentinel - keep last
 };
 
@@ -91,7 +94,8 @@ static char g_Corr_DetectorNames[CORR_DET_COUNT][24] = {
     "AimSnap", "AngleRepeat", "CmdnumSpike", "Aimlock", "NoRecoil", "HeadshotRatio", "Psilent", "Autoshoot", "FovLock",
     "BhopRatio", "Bhop2", "Integrity", "NoLerp",
     "BoneLock", "SilentAim", "TriggerBot", "KillBurst", "SpinBot",
-    "TargetAcq", "AimVariance", "BhopVariance", "ShotDecision"
+    "TargetAcq", "AimVariance", "BhopVariance", "ShotDecision",
+    "BhopTurnRate", "BhopSync", "NoSpread"
 };
 
 void Correlation_Init(int client)

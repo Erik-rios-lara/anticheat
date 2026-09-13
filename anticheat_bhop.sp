@@ -36,6 +36,14 @@
 #define BHOP_MIN_JUMPS 25    // minimum samples before scoring
 #define BHOP_STREAK_ALERT 10 // consecutive perfect jumps = instant high score
 
+// Shared "how long does a confirmed event still count" window for the
+// newer per-event metrics below (5 and 6) - same idea as EVENT_EXPIRE_
+// SECONDS in anticheat_aim.sp: a player who did this once and has since
+// played clean shouldn't stay flagged forever.
+#define BHOP_EVENT_EXPIRE_SECONDS 600.0
+
+static float FMinBhop(float a, float b) { return a < b ? a : b; }
+
 // A landing whose height differs from the previous landing by at least
 // this many units counts as "terrain changed" - the jump could not have
 // been pre-timed. ~18 units is roughly one stair step in L4D2.
@@ -84,6 +92,51 @@
 #define BHOP_STRAFE_KEY_FRACTION   0.4    // A or D must be held this fraction of airborne ticks
 #define BHOP_NOSTRAFE_RATIO        0.70   // if >= this fraction of a long chain's jumps had no
                                          // air-strafe, that's the suspicious pattern
+
+// ------------------------------------------------------------------
+// Metric 5: "Static Turn Rate" (technique credited to Oryx-AC) - a
+// silent/auto air-strafe script doesn't just hold A or D, it turns the
+// view by the mathematically OPTIMAL yaw delta every single tick: the
+// angle that converts the most speed into forward gain for the player's
+// current velocity, derived from Source's air-acceleration formula as
+// asin(30.0 / speed) in degrees. A human chasing max bhop speed gets
+// CLOSE to that angle by feel, but never locks onto it turn after turn -
+// their real delta wobbles tick to tick. A script computes the same
+// optimized angle every tick and turns exactly that much, so its delta
+// sits pinned to the target angle with near-zero deviation for a long,
+// unbroken run while airborne.
+#define TURNRATE_MAX_SPEED       2560.0  // above this the airstrafe optimum stops being meaningful (surf-like speed)
+#define TURNRATE_MIN_SPEED        100.0  // below this the asin() argument blows up / isn't a real strafe attempt
+#define TURNRATE_TOLERANCE_DEG      0.35 // how close to the optimum counts as "locked on"
+#define TURNRATE_MIN_STREAK          10  // consecutive locked-on ticks needed before this counts as evidence
+#define TURNRATE_EVENT_HISTORY       12
+int   g_BH_TurnRateStreak[MAXPLAYERS+1];
+float g_BH_TurnRateEventTime[MAXPLAYERS+1][TURNRATE_EVENT_HISTORY];
+int   g_BH_TurnRateEventHead[MAXPLAYERS+1];
+int   g_BH_TurnRateEventCount[MAXPLAYERS+1];
+
+// ------------------------------------------------------------------
+// Metric 6: "Strafe-Key Sync" (technique credited to Oryx-AC's BASH
+// module) - measures the tick gap between a strafe key (A/D) changing
+// state and the view yaw actually turning in the matching direction. A
+// human's mouse hand reacts to their own keypress with real, variable
+// lag - never the same tick, over and over. A silent-strafe / auto-sync
+// script turns the view on the EXACT same tick the key state changes,
+// every time, because both are driven by the same code path instead of
+// a hand pressing a key and separately moving a mouse.
+#define SYNC_MIN_YAW_DEG          1.0    // minimum yaw turn this tick to count as "a real strafe turn"
+#define SYNC_PERFECT_TICK_GAP       0    // key-change-to-turn gap of exactly this = a "perfect" sync sample
+#define SYNC_HISTORY 30                  // last N judged strafe transitions
+#define SYNC_MIN_SAMPLES           18
+#define SYNC_PERFECT_RATIO         0.80  // this fraction of samples at perfect sync is the tell
+bool  g_BH_SyncPrevLeft[MAXPLAYERS+1];
+bool  g_BH_SyncPrevRight[MAXPLAYERS+1];
+int   g_BH_SyncTicksSinceKeyChange[MAXPLAYERS+1];
+bool  g_BH_SyncAwaitingTurn[MAXPLAYERS+1];
+int   g_BH_SyncGapTicks[MAXPLAYERS+1][SYNC_HISTORY]; // tick gap recorded per judged sample (capped)
+int   g_BH_SyncHead[MAXPLAYERS+1];
+int   g_BH_SyncCount[MAXPLAYERS+1];
+float g_BH_SyncLastEventTime[MAXPLAYERS+1];
 
 // ------------------------------------------------------------------
 // Per-player state
@@ -152,6 +205,131 @@ void Bhop_Init(int client)
     g_BH_HoneypotActive[client] = false;
     g_BH_HoneypotPerfectCount[client] = 0;
     g_BH_HoneypotBonus[client] = 0;
+
+    g_BH_TurnRateStreak[client] = 0;
+    g_BH_TurnRateEventHead[client] = 0;
+    g_BH_TurnRateEventCount[client] = 0;
+
+    g_BH_SyncPrevLeft[client] = false;
+    g_BH_SyncPrevRight[client] = false;
+    g_BH_SyncTicksSinceKeyChange[client] = 0;
+    g_BH_SyncAwaitingTurn[client] = false;
+    g_BH_SyncHead[client] = 0;
+    g_BH_SyncCount[client] = 0;
+    g_BH_SyncLastEventTime[client] = 0.0;
+}
+
+// ------------------------------------------------------------------
+static float Bhop_FAbs(float v) { return v < 0.0 ? -v : v; }
+
+// "Static Turn Rate" check (see comment near TURNRATE_* constants above).
+// Computes this tick's mathematically optimal air-strafe angle for the
+// player's current ground-plane speed and checks how close the real yaw
+// delta landed to it.
+static void Bhop_CheckStaticTurnRate(int client, float dy)
+{
+    float vel[3];
+    GetEntPropVector(client, Prop_Data, "m_vecVelocity", vel);
+    float speed = SquareRoot(vel[0]*vel[0] + vel[1]*vel[1]);
+
+    if (speed < TURNRATE_MIN_SPEED || speed > TURNRATE_MAX_SPEED)
+    {
+        g_BH_TurnRateStreak[client] = 0;
+        return;
+    }
+
+    // asin() argument must stay in [-1, 1] - guard the edge the same way
+    // Oryx-AC's reference implementation does before the ratio ever gets
+    // there, rather than let a math domain error zero it out silently.
+    float ratio = 30.0 / speed;
+    if (ratio > 1.0) ratio = 1.0;
+    float optimalDeg = ArcSine(ratio) * 57.29577951308232;
+
+    float realDeg = Bhop_FAbs(dy);
+    float diff = Bhop_FAbs(realDeg - optimalDeg);
+
+    if (diff <= TURNRATE_TOLERANCE_DEG)
+    {
+        g_BH_TurnRateStreak[client]++;
+        if (g_BH_TurnRateStreak[client] >= TURNRATE_MIN_STREAK)
+        {
+            int idx = g_BH_TurnRateEventHead[client];
+            g_BH_TurnRateEventTime[client][idx] = GetGameTime();
+            g_BH_TurnRateEventHead[client] = (idx + 1) % TURNRATE_EVENT_HISTORY;
+            if (g_BH_TurnRateEventCount[client] < TURNRATE_EVENT_HISTORY) g_BH_TurnRateEventCount[client]++;
+
+            // Severity: a longer unbroken lock onto the mathematical
+            // optimum is stronger evidence - a human's feel-based strafe
+            // does not stay pinned this tightly this long.
+            int severity = RoundFloat(50.0 + float(g_BH_TurnRateStreak[client] - TURNRATE_MIN_STREAK) * 3.0);
+            Correlation_ReportEvent(client, CORR_DET_BHOP_TURNRATE, severity);
+            g_BH_TurnRateStreak[client] = 0; // one confirmed lock-on = one event, keep judging fresh
+        }
+    }
+    else
+    {
+        g_BH_TurnRateStreak[client] = 0;
+    }
+}
+
+// "Strafe-Key Sync" check (see comment near SYNC_* constants above). Waits
+// for a strafe key's state to change, then measures how many ticks pass
+// before the view actually turns in the matching direction.
+static void Bhop_CheckStrafeSync(int client, int buttons, float dy)
+{
+    bool left  = (buttons & IN_MOVELEFT)  != 0;
+    bool right = (buttons & IN_MOVERIGHT) != 0;
+
+    bool keyChanged = (left != g_BH_SyncPrevLeft[client]) || (right != g_BH_SyncPrevRight[client]);
+    g_BH_SyncPrevLeft[client] = left;
+    g_BH_SyncPrevRight[client] = right;
+
+    if (keyChanged)
+    {
+        g_BH_SyncAwaitingTurn[client] = true;
+        g_BH_SyncTicksSinceKeyChange[client] = 0;
+        return; // the turn that answers THIS change starts being measured next tick
+    }
+
+    if (!g_BH_SyncAwaitingTurn[client]) return;
+
+    g_BH_SyncTicksSinceKeyChange[client]++;
+
+    // Exactly one of left/right held is a real strafe attempt to judge;
+    // both or neither isn't a clean sample.
+    bool oneKeyHeld = (left != right);
+    if (!oneKeyHeld) { g_BH_SyncAwaitingTurn[client] = false; return; }
+
+    bool turnedMatchingDir = (left && dy > 0.0) || (right && dy < 0.0);
+    if (Bhop_FAbs(dy) < SYNC_MIN_YAW_DEG) return; // no real turn yet, keep waiting a few more ticks
+
+    g_BH_SyncAwaitingTurn[client] = false; // this transition is now judged either way
+
+    if (!turnedMatchingDir) return; // turned the wrong way - not a clean sample, discard
+
+    int gap = g_BH_SyncTicksSinceKeyChange[client] - 1; // ticks between the key change and the turn landing
+    int idx = g_BH_SyncHead[client];
+    g_BH_SyncGapTicks[client][idx] = gap;
+    g_BH_SyncHead[client] = (idx + 1) % SYNC_HISTORY;
+    if (g_BH_SyncCount[client] < SYNC_HISTORY) g_BH_SyncCount[client]++;
+
+    int total = g_BH_SyncCount[client];
+    if (total < SYNC_MIN_SAMPLES) return;
+
+    int perfect = 0;
+    for (int i = 0; i < total; i++)
+    {
+        if (g_BH_SyncGapTicks[client][i] <= SYNC_PERFECT_TICK_GAP) perfect++;
+    }
+    float perfectRatio = float(perfect) / float(total);
+    if (perfectRatio < SYNC_PERFECT_RATIO) return;
+
+    float now = GetGameTime();
+    if (now - g_BH_SyncLastEventTime[client] < 3.0) return; // don't re-fire every single qualifying sample
+    g_BH_SyncLastEventTime[client] = now;
+
+    int severity = RoundFloat(45.0 + (perfectRatio - SYNC_PERFECT_RATIO) / (1.0 - SYNC_PERFECT_RATIO) * 55.0);
+    Correlation_ReportEvent(client, CORR_DET_BHOP_SYNC, severity);
 }
 
 // ------------------------------------------------------------------
@@ -178,9 +356,19 @@ void Bhop_RecordTick(int client, int buttons, const float angles[3])
             // air-strafe turns left; a D-key air-strafe turns right.
             if (dy > 0.0) g_BH_YawLeftSweep[client]  += dy;
             else          g_BH_YawRightSweep[client] += -dy;
+
+            Bhop_CheckStaticTurnRate(client, dy);
+            Bhop_CheckStrafeSync(client, buttons, dy);
         }
         g_BH_PrevYaw[client] = angles[1];
         g_BH_HasPrevYaw[client] = true;
+    }
+    else
+    {
+        // Grounded - no airborne strafe to judge this tick. A sync sample
+        // waiting on a turn that never came (landed mid-measurement) is
+        // simply dropped rather than counted either way.
+        g_BH_SyncAwaitingTurn[client] = false;
     }
 
     // Detect landing: the player went from airborne last tick to on ground this tick.
@@ -387,6 +575,51 @@ int Bhop_GetScore(int client)
             if (strafeJudged >= BHOP_STRAFE_MIN_CHAIN * 2 && m4 > combined) combined = m4;
             else if (m4 * 0.6 > combined) combined = m4 * 0.6; // provisional weight on a small sample
         }
+    }
+    if (combined > 100.0) combined = 100.0;
+
+    // --- Metric 5: static turn rate (optimized air-strafe angle) ---
+    // Each confirmed event already required a long unbroken lock onto the
+    // mathematically-derived optimum (see Bhop_CheckStaticTurnRate), so
+    // this is judged evidence, not a raw sample - even one recent event
+    // is meaningful, repeats push it to the cap fast.
+    int turnRateRecent = 0;
+    {
+        float now5 = GetGameTime();
+        int total5 = g_BH_TurnRateEventCount[client];
+        for (int i = 0; i < total5; i++)
+        {
+            if (now5 - g_BH_TurnRateEventTime[client][i] <= BHOP_EVENT_EXPIRE_SECONDS) turnRateRecent++;
+        }
+    }
+    if (turnRateRecent >= 1)
+    {
+        float m5 = FMinBhop(65.0 + float(turnRateRecent - 1) * 15.0, 100.0);
+        if (m5 > combined) combined = m5;
+    }
+
+    // --- Metric 6: strafe-key-to-yaw sync ---
+    // Correlation_ReportEvent for this path is already gated on a tight
+    // perfect-sync ratio across a real sample (see Bhop_CheckStrafeSync),
+    // so a confirmed report here is a judged pattern, not a raw count.
+    int syncRecent = 0;
+    {
+        float now6 = GetGameTime();
+        int total6 = g_BH_SyncCount[client];
+        // Sync doesn't keep a separate event-time ring (the gap samples
+        // ARE the ring); use the last-event timestamp as a simple
+        // recency gate instead - one qualifying report is enough given
+        // how tightly Bhop_CheckStrafeSync already gates it.
+        if (total6 >= SYNC_MIN_SAMPLES && now6 - g_BH_SyncLastEventTime[client] <= BHOP_EVENT_EXPIRE_SECONDS
+            && g_BH_SyncLastEventTime[client] > 0.0)
+        {
+            syncRecent = 1;
+        }
+    }
+    if (syncRecent >= 1)
+    {
+        float m6 = 60.0;
+        if (m6 > combined) combined = m6;
     }
     if (combined > 100.0) combined = 100.0;
 

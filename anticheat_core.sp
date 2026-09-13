@@ -351,10 +351,9 @@ public Action Hook_TraceAttack(int victim, int &attacker, int &inflictor, float 
     if (attacker < 1 || attacker > MaxClients || !IsClientInGame(attacker)) return Plugin_Continue;
     if (GetClientTeam(attacker) != 2) return Plugin_Continue;
     if (!g_PlayerActive[attacker]) return Plugin_Continue;
-    Aim_RecordShot(attacker, victim, hitgroup);
-
     float attackerAngles[3];
     GetClientEyeAngles(attacker, attackerAngles);
+    Aim_RecordShot(attacker, victim, hitgroup, attackerAngles);
     OSAC_RecordShot(attacker, victim, hitgroup, attackerAngles);
 
     // Shot Decision Analysis: correlate this shot's context (weapon,
