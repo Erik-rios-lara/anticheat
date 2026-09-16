@@ -76,6 +76,7 @@ enum CorrelationDetector
     CORR_DET_AIMDRIFT,           // Aim Drift - error-reduction rate vs. live lobby baseline (anticheat_aimdrift.sp)
     CORR_DET_TRACKING,           // Tracking kinematics - straightness/critical points/velocity asymmetry (anticheat_tracking.sp)
     CORR_DET_AIM_HONEYPOT,       // Aim honeypot - survives a secret target-speed change a human's feel can't (anticheat_aimhoneypot.sp)
+    CORR_DET_KLDIVERGENCE,       // Angular-velocity distribution shape divergence vs. live lobby baseline (anticheat_kldivergence.sp)
     CORR_DET_COUNT               // sentinel - keep last
 };
 
@@ -102,7 +103,7 @@ static char g_Corr_DetectorNames[CORR_DET_COUNT][24] = {
     "BoneLock", "SilentAim", "TriggerBot", "KillBurst", "SpinBot",
     "TargetAcq", "AimVariance", "BhopVariance", "ShotDecision",
     "BhopTurnRate", "BhopSync", "NoSpread",
-    "Speedhack", "Noclip", "Macro", "AimDrift", "Tracking", "AimHoneypot"
+    "Speedhack", "Noclip", "Macro", "AimDrift", "Tracking", "AimHoneypot", "KLDivergence"
 };
 
 void Correlation_Init(int client)

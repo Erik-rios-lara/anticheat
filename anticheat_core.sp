@@ -118,6 +118,7 @@ void AC_RefreshSpecialCache()
 #include "anticheat_aimdrift.sp"
 #include "anticheat_tracking.sp"
 #include "anticheat_aimhoneypot.sp"
+#include "anticheat_kldivergence.sp"
 #include "anticheat_targetacq.sp"
 #include "anticheat_variance.sp"
 #include "anticheat_shotdecision.sp"
@@ -255,6 +256,7 @@ public void OnPluginStart()
 public void OnMapStart()
 {
     AimDrift_OnMapStart();
+    KLDivergence_OnMapStart();
 }
 
 // ------------------------------------------------------------------
@@ -276,6 +278,7 @@ public void OnClientPutInServer(int client)
     AimDrift_Init(client);
     Tracking_Init(client);
     AimHoneypot_Init(client);
+    KLDivergence_Init(client);
     Bhop_Init(client);
     Bhop2_Init(client);
     Integrity_Init(client);
@@ -387,6 +390,11 @@ public Action OnPlayerRunCmd(int client, int &buttons, int &impulse,
             // "watched") to keep any chance of a perceptible gameplay
             // side effect confined to players who already warrant it.
             if (tier >= 2) AimHoneypot_RecordTick(client, angles);
+
+            // Distribution-shape divergence needs the same per-tick
+            // engaged trajectory as Aim Drift/Tracking above - same
+            // reasoning and gating.
+            KLDivergence_RecordTick(client, angles);
         }
     }
 
@@ -463,6 +471,8 @@ public Action Timer_Score(Handle timer, any client)
     if (trackingScore > aimScore) aimScore = trackingScore; // tracking-path kinematic shape (straightness/critical points/asymmetry)
     int aimHoneypotScore = AimHoneypot_GetScore(client);
     if (aimHoneypotScore > aimScore) aimScore = aimHoneypotScore; // survived a secret target-speed change a human's feel can't
+    int klDivergenceScore = KLDivergence_GetScore(client);
+    if (klDivergenceScore > aimScore) aimScore = klDivergenceScore; // angular-velocity distribution shape vs. live lobby baseline
     int bhopScore   = Bhop_GetScore(client);
     int bhop2Score  = Bhop2_GetScore(client);
     if (bhop2Score > bhopScore) bhopScore = bhop2Score; // two independent bhop detectors, take the worst
