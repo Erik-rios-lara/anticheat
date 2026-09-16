@@ -117,6 +117,7 @@ void AC_RefreshSpecialCache()
 #include "anticheat_aim.sp"
 #include "anticheat_aimdrift.sp"
 #include "anticheat_tracking.sp"
+#include "anticheat_aimhoneypot.sp"
 #include "anticheat_targetacq.sp"
 #include "anticheat_variance.sp"
 #include "anticheat_shotdecision.sp"
@@ -274,6 +275,7 @@ public void OnClientPutInServer(int client)
     Aim_Init(client);
     AimDrift_Init(client);
     Tracking_Init(client);
+    AimHoneypot_Init(client);
     Bhop_Init(client);
     Bhop2_Init(client);
     Integrity_Init(client);
@@ -294,6 +296,17 @@ public void OnClientDisconnect(int client)
     g_PlayerActive[client] = false;
     g_HighRiskStreak[client] = 0;
     g_SuspicionTier[client] = 0;
+
+    // If this client was the live target of someone's active aim
+    // honeypot (a player-controlled Special Infected disconnecting mid-
+    // round), revert its speed scale now - it won't get another
+    // player_death event.
+    AimHoneypot_OnEntityGone(client);
+    // And if THIS client was the one running an active honeypot against
+    // someone else, revert that target's speed too before this client's
+    // own state is torn down - otherwise the target is left permanently
+    // altered with nothing left to ever revert it.
+    AimHoneypot_Init(client);
 
     if (g_ScoreTimer[client] != null)
     {
@@ -367,6 +380,13 @@ public Action OnPlayerRunCmd(int client, int &buttons, int &impulse,
             // an engagement to measure its shape - same reasoning and
             // gating as the other session-based modules above.
             Tracking_RecordTick(client, angles);
+
+            // Aim honeypot: only for players ALREADY at tier >= 2
+            // (suspicious) - it briefly alters a live target's movement
+            // speed, so it's deliberately withheld from tier 1 (merely
+            // "watched") to keep any chance of a perceptible gameplay
+            // side effect confined to players who already warrant it.
+            if (tier >= 2) AimHoneypot_RecordTick(client, angles);
         }
     }
 
@@ -441,6 +461,8 @@ public Action Timer_Score(Handle timer, any client)
     if (aimDriftScore > aimScore) aimScore = aimDriftScore; // error-reduction rate vs. live lobby baseline
     int trackingScore = Tracking_GetScore(client);
     if (trackingScore > aimScore) aimScore = trackingScore; // tracking-path kinematic shape (straightness/critical points/asymmetry)
+    int aimHoneypotScore = AimHoneypot_GetScore(client);
+    if (aimHoneypotScore > aimScore) aimScore = aimHoneypotScore; // survived a secret target-speed change a human's feel can't
     int bhopScore   = Bhop_GetScore(client);
     int bhop2Score  = Bhop2_GetScore(client);
     if (bhop2Score > bhopScore) bhopScore = bhop2Score; // two independent bhop detectors, take the worst
@@ -794,8 +816,13 @@ public Action Event_PlayerSpawn(Event event, const char[] name, bool dontBroadca
 
 public Action Event_PlayerDeath(Event event, const char[] name, bool dontBroadcast)
 {
+    int victim = GetClientOfUserId(event.GetInt("userid"));
+    // Any death (any team, any cause) can end an active aim honeypot if
+    // the dead entity happens to be its target - checked unconditionally
+    // so the altered speed scale never lingers on a reused entity slot.
+    if (victim >= 1 && victim <= MaxClients) AimHoneypot_OnEntityGone(victim);
+
     int attacker = GetClientOfUserId(event.GetInt("attacker"));
-    int victim   = GetClientOfUserId(event.GetInt("userid"));
     if (attacker < 1 || attacker > MaxClients || !IsClientInGame(attacker)) return Plugin_Continue;
     if (victim < 1 || victim > MaxClients) return Plugin_Continue;
     if (GetClientTeam(attacker) != 2) return Plugin_Continue;
