@@ -1,0 +1,47 @@
+{
+  "scenarios": [
+    {
+      "name": "Jugador limpio",
+      "evaluations": [ { "aim": 4, "bhop": 8, "macro": 3 } ],
+      "expected": { "risk": 3, "level": "INFO", "action": "NONE" }
+    },
+    {
+      "name": "Macro aislado no sanciona",
+      "evaluations": [ { "macro": 100 } ],
+      "expected": { "risk": 4, "level": "INFO", "action": "NONE" }
+    },
+    {
+      "name": "Bhop estadístico se reporta",
+      "evaluations": [ { "bhop": 90 } ],
+      "expected": { "risk": 19, "level": "STATISTICAL", "action": "NOTE" }
+    },
+    {
+      "name": "Riesgo alto sin módulo fuerte no expulsa",
+      "evaluations": [ { "aim": 59, "bhop": 59, "integrity": 59, "noLerp": 59, "osac": 59, "macro": 59, "events": [ { "detector": "Aim", "age": 0, "severity": 100 }, { "detector": "Bhop", "age": 0.2, "severity": 100 }, { "detector": "OSAC", "age": 0.4, "severity": 100 } ] } ],
+      "expected": { "risk": 77, "level": "CORRELATED", "action": "NO_KICK_INSUFFICIENT_EVIDENCE" }
+    },
+    {
+      "name": "Correlación requiere tres confirmaciones",
+      "evaluations": [
+        { "aim": 90, "bhop": 90, "events": [ { "detector": "Aim", "age": 0, "severity": 90 }, { "detector": "Bhop", "age": 0.3, "severity": 90 } ] },
+        { "aim": 90, "bhop": 90, "events": [ { "detector": "Aim", "age": 0, "severity": 90 }, { "detector": "Bhop", "age": 0.3, "severity": 90 } ] },
+        { "aim": 90, "bhop": 90, "events": [ { "detector": "Aim", "age": 0, "severity": 90 }, { "detector": "Bhop", "age": 0.3, "severity": 90 } ] }
+      ],
+      "expected": { "risk": 63, "level": "CORRELATED", "action": "KICK" }
+    },
+    {
+      "name": "Conexión inestable reinicia confirmación",
+      "evaluations": [
+        { "aim": 90, "bhop": 90, "events": [ { "detector": "Aim", "age": 0, "severity": 90 }, { "detector": "Bhop", "age": 0.3, "severity": 90 } ] },
+        { "aim": 90, "bhop": 90, "unstable": 1, "events": [ { "detector": "Aim", "age": 0, "severity": 90 }, { "detector": "Bhop", "age": 0.3, "severity": 90 } ] },
+        { "aim": 90, "bhop": 90, "events": [ { "detector": "Aim", "age": 0, "severity": 90 }, { "detector": "Bhop", "age": 0.3, "severity": 90 } ] }
+      ],
+      "expected": { "risk": 63, "level": "CORRELATED", "action": "AWAITING_CONFIRMATION" }
+    },
+    {
+      "name": "Violación con riesgo bajo solo queda registrada",
+      "evaluations": [ { "integrity": 90 } ],
+      "expected": { "risk": 10, "level": "VIOLATION", "action": "NONE" }
+    }
+  ]
+}
