@@ -1,0 +1,2 @@
+C:\Users\erikr\Documents\anti-cheat\scripting\anticheat\AntiCheatManager\bin\Release\net10.0-windows\win-x64\publish\AntiCheatManager.pdb
+C:\Users\erikr\Documents\anti-cheat\scripting\anticheat\AntiCheatManager\bin\Release\net10.0-windows\win-x64\publish\AntiCheatManager.exe
