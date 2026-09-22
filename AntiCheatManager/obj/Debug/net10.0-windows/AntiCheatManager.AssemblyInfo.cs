@@ -13,7 +13,7 @@ using System.Reflection;
 [assembly: System.Reflection.AssemblyCompanyAttribute("AntiCheatManager")]
 [assembly: System.Reflection.AssemblyConfigurationAttribute("Debug")]
 [assembly: System.Reflection.AssemblyFileVersionAttribute("1.0.0.0")]
-[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+87a5d17125c862f31efc733452c29e249e394571")]
+[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+5bb8404898d3d0a0126326b51f00ace37baf72b5")]
 [assembly: System.Reflection.AssemblyProductAttribute("AntiCheatManager")]
 [assembly: System.Reflection.AssemblyTitleAttribute("AntiCheatManager")]
 [assembly: System.Reflection.AssemblyVersionAttribute("1.0.0.0")]
